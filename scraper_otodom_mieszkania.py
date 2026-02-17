@@ -27,7 +27,7 @@ MARKET_MAP = {"primary": "pierwotny", "secondary": "wtórny"}
 
 
 # ====== FILTRY "UI ŚMIECI" (żeby nie zapisywać do CSV złapanych przycisków/CTA/map itp.) ======
-# Lista oparta o adres_otodom.py (Wróć/Udostępnij/Pokaż na mapie/otomoto.pl/maps itd.)
+
 _UI_BLACKLIST_RAW = {
     # ogólne przyciski/CTA
     "wróć", "wroc", "udostępnij", "udostepnij", "zapisz", "obserwuj",

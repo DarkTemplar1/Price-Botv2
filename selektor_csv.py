@@ -83,6 +83,72 @@ def _xlsx_has_sheet(path: Path, sheet_name: str) -> bool:
     except Exception:
         return False
 
+
+def _sheet_header_keys(ws) -> set[str]:
+    """Zwraca znormalizowany zestaw nazw kolumn z wiersza 1 (bez wrażliwości na polskie znaki)."""
+    header = []
+    for cell in ws[1]:
+        header.append(str(cell.value).strip() if cell.value is not None else "")
+    while header and header[-1] == "":
+        header.pop()
+
+    def _k(x: str) -> str:
+        return _plain(x).strip().lower().replace(" ", "").replace("\xa0", "").replace("\t", "")
+
+    return {_k(h) for h in header if h}
+
+def ensure_report_sheet(path: Path) -> str:
+    """Jeśli w Excelu nie ma arkusza 'raport', wybiera najbardziej pasujący arkusz i ZMIENIA jego nazwę na 'raport'.
+
+    Zwraca nazwę arkusza, który został przemianowany (albo 'raport', jeśli już istniał).
+    """
+    if path.suffix.lower() not in (".xlsx", ".xlsm"):
+        return RAPORT_SHEET
+
+    keep_vba = path.suffix.lower() == ".xlsm"
+    wb = load_workbook(path, keep_vba=keep_vba)
+
+    if RAPORT_SHEET in wb.sheetnames:
+        return RAPORT_SHEET
+
+    # wybierz arkusz "najbardziej raportowy" (po nagłówkach)
+    must = {"nrkw"}  # absolutny sygnał (Nr KW)
+    nice = {"wojewodztwo", "powiat", "gmina", "miejscowosc", "dzielnica", "ulica", "obszar"}
+
+    best_name = None
+    best_score = -1
+
+    for name in wb.sheetnames:
+        if name == RAPORT_ODF:
+            continue
+        ws = wb[name]
+        keys = _sheet_header_keys(ws)
+        if not keys:
+            continue
+
+        score = 0
+        if must & keys:
+            score += 100
+        score += len(nice & keys)
+
+        # bonus jeśli wygląda jak "raport"
+        if "raport" in _plain(name).lower():
+            score += 5
+
+        if score > best_score:
+            best_score = score
+            best_name = name
+
+    if best_name is None:
+        best_name = wb.sheetnames[0]
+
+    ws = wb[best_name]
+
+    # przemianuj arkusz na 'raport' (bez kasowania innych arkuszy)
+    ws.title = RAPORT_SHEET
+    wb.save(path)
+    return best_name
+
 def _read_report_excel(path: Path, sheet_name: str = RAPORT_SHEET) -> pd.DataFrame:
     """Czyta WYŁĄCZNIE arkusz 'raport'. Jeśli nie istnieje – rzuca wyjątek."""
     if not _xlsx_has_sheet(path, sheet_name):
@@ -99,8 +165,11 @@ def _get_header_from_ws(ws) -> list[str]:
 
 def ensure_raport_odfiltrowane(path: Path) -> None:
     """
-    Gwarantuje istnienie arkusza 'raport_odfiltrowane' z SAMYMI nagłówkami,
-    skopiowanymi z arkusza 'raport'. Nie rusza innych arkuszy.
+    Zapewnia istnienie arkusza 'raport_odfiltrowane' i nagłówków zgodnych z arkuszem 'raport'.
+
+    WAŻNE: Nie usuwa żadnych istniejących danych z 'raport_odfiltrowane'.
+    - jeśli arkusza nie ma -> tworzy i wpisuje nagłówki
+    - jeśli arkusz istnieje -> nadpisuje TYLKO pierwszy wiersz nagłówkami (bez kasowania reszty)
     """
     if path.suffix.lower() not in (".xlsx", ".xlsm"):
         return
@@ -126,11 +195,7 @@ def ensure_raport_odfiltrowane(path: Path) -> None:
 
     ws_o.sheet_state = "visible"
 
-    # 3) wyczyść wszystko w arkuszu i wpisz tylko nagłówek
-    if ws_o.max_row >= 1:
-        ws_o.delete_rows(1, ws_o.max_row)
-
-    # wpisz nagłówek
+    # 3) wpisz/napraw nagłówek bez kasowania danych
     for c, name in enumerate(header, start=1):
         ws_o.cell(row=1, column=c).value = name
 
@@ -379,6 +444,16 @@ class App(tk.Tk):
     def load_dataframe(self, path: Path):
         try:
             if path.suffix.lower() in (".xlsx", ".xlsm"):
+                # Jeśli arkusz ma dowolną nazwę, a nie ma 'raport' -> przemianuj najlepszy na 'raport'
+                try:
+                    renamed_from = ensure_report_sheet(path)
+                    if renamed_from != RAPORT_SHEET:
+                        # renamed_from = oryginalna nazwa arkusza przemianowanego na 'raport'
+                        messagebox.showinfo("Arkusz raportu", f"Nie znaleziono arkusza '{RAPORT_SHEET}'.\nZmieniono arkusz '{renamed_from}' na '{RAPORT_SHEET}'.")
+                except Exception:
+                    # jeśli nie uda się przemianować, i tak spróbujemy czytać 'raport' (złapie się error niżej)
+                    pass
+
                 # ⛔ Podgląd ma być TYLKO arkusza 'raport'
                 self.df = _read_report_excel(path, sheet_name=RAPORT_SHEET)
 
