@@ -1,0 +1,16 @@
+requests
+beautifulsoup4
+lxml
+
+pandas
+numpy
+openpyxl
+
+selenium
+
+python-dateutil
+urllib3
+charset-normalizer
+idna
+
+

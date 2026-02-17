@@ -1,0 +1,95 @@
+92 INFO: PyInstaller: 6.16.0, contrib hooks: 2025.9
+92 INFO: Python: 3.11.9
+98 INFO: Platform: Windows-10-10.0.26100-SP0
+98 INFO: Python environment: C:\Users\skalk\PycharmProjects\PythonProject\.venv
+98 INFO: wrote C:\Users\skalk\PycharmProjects\PythonProject\PriceBot.spec
+105 INFO: Module search paths (PYTHONPATH):
+['C:\\Users\\skalk\\PycharmProjects\\PythonProject',
+ 'C:\\Users\\skalk\\AppData\\Local\\Programs\\Python\\Python311\\python311.zip',
+ 'C:\\Users\\skalk\\AppData\\Local\\Programs\\Python\\Python311\\DLLs',
+ 'C:\\Users\\skalk\\AppData\\Local\\Programs\\Python\\Python311\\Lib',
+ 'C:\\Users\\skalk\\AppData\\Local\\Programs\\Python\\Python311',
+ 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv',
+ 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages',
+ 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\setuptools\\_vendor',
+ 'C:\\Users\\skalk\\PycharmProjects\\PythonProject']
+319 INFO: checking Analysis
+331 INFO: Building because inputs changed
+331 INFO: Looking for Python shared library...
+331 INFO: Using Python shared library: C:\Users\skalk\AppData\Local\Programs\Python\Python311\python311.dll
+331 INFO: Running Analysis Analysis-00.toc
+331 INFO: Target bytecode optimization level: 0
+331 INFO: Initializing module dependency graph...
+332 INFO: Initializing module graph hook caches...
+342 INFO: Analyzing modules for base_library.zip ...
+904 INFO: Processing standard module hook 'hook-heapq.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+943 INFO: Processing standard module hook 'hook-encodings.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+1686 INFO: Processing standard module hook 'hook-pickle.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+2358 INFO: Caching module dependency graph...
+2378 INFO: Analyzing C:\Users\skalk\PycharmProjects\PythonProject\selektor_csv.py
+2390 INFO: Processing pre-find-module-path hook 'hook-tkinter.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_find_module_path'
+2391 INFO: TclTkInfo: initializing cached Tcl/Tk info...
+2519 INFO: Processing standard module hook 'hook-_tkinter.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+2554 INFO: Processing standard module hook 'hook-pandas.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+3195 INFO: Processing standard module hook 'hook-platform.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+3206 INFO: Processing standard module hook 'hook-sysconfig.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+3218 INFO: Processing standard module hook 'hook-numpy.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+3518 INFO: Processing standard module hook 'hook-difflib.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+3663 INFO: Processing standard module hook 'hook-multiprocessing.util.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+3734 INFO: Processing standard module hook 'hook-xml.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+3852 INFO: Processing standard module hook 'hook-_ctypes.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+4714 INFO: Processing pre-safe-import-module hook 'hook-typing_extensions.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+4715 INFO: SetuptoolsInfo: initializing cached setuptools info...
+6817 INFO: Processing standard module hook 'hook-charset_normalizer.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+7024 INFO: Processing standard module hook 'hook-pytz.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+8203 INFO: Processing standard module hook 'hook-pandas.io.formats.style.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+9255 INFO: Processing standard module hook 'hook-pandas.plotting.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+9573 INFO: Processing standard module hook 'hook-openpyxl.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+9626 INFO: Processing standard module hook 'hook-lxml.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+9805 INFO: Processing standard module hook 'hook-lxml.etree.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+9881 INFO: Processing standard module hook 'hook-xml.etree.cElementTree.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+10531 INFO: Processing standard module hook 'hook-sqlite3.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+10701 INFO: Processing standard module hook 'hook-pandas.io.clipboard.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+10891 INFO: Processing standard module hook 'hook-dateutil.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+10958 INFO: Processing pre-safe-import-module hook 'hook-six.moves.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+11090 INFO: Processing standard module hook 'hook-xml.dom.domreg.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+11580 INFO: Processing standard module hook 'hook-urllib3.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+11891 INFO: Processing standard module hook 'hook-certifi.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+11964 INFO: Processing module hooks (post-graph stage)...
+12074 INFO: Processing standard module hook 'hook-lxml.isoschematron.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+12084 WARNING: Hidden import "jinja2" not found!
+12086 INFO: Processing standard module hook 'hook-_tkinter.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks'
+12086 INFO: Processing standard module hook 'hook-lxml.objectify.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+12097 INFO: Performing binary vs. data reclassification (1548 entries)
+12166 INFO: Looking for ctypes DLLs
+12209 INFO: Analyzing run-time hooks ...
+12212 INFO: Including run-time hook 'pyi_rth_inspect.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+12214 INFO: Including run-time hook 'pyi_rth_pkgutil.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+12215 INFO: Including run-time hook 'pyi_rth_multiprocessing.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+12216 INFO: Including run-time hook 'pyi_rth__tkinter.py' from 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+12241 INFO: Creating base_library.zip...
+12261 INFO: Looking for dynamic libraries
+12806 INFO: Extra DLL search directories (AddDllDirectory): ['C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\numpy.libs', 'C:\\Users\\skalk\\PycharmProjects\\PythonProject\\.venv\\Lib\\site-packages\\pandas.libs']
+12806 INFO: Extra DLL search directories (PATH): []
+13165 INFO: Warnings written to C:\Users\skalk\PycharmProjects\PythonProject\build\PriceBot\warn-PriceBot.txt
+13227 INFO: Graph cross-reference written to C:\Users\skalk\PycharmProjects\PythonProject\build\PriceBot\xref-PriceBot.html
+13259 INFO: checking PYZ
+13263 INFO: Building because toc changed
+13263 INFO: Building PYZ (ZlibArchive) C:\Users\skalk\PycharmProjects\PythonProject\build\PriceBot\PYZ-00.pyz
+13837 INFO: Building PYZ (ZlibArchive) C:\Users\skalk\PycharmProjects\PythonProject\build\PriceBot\PYZ-00.pyz completed successfully.
+13858 INFO: checking PKG
+13865 INFO: Building because toc changed
+13865 INFO: Building PKG (CArchive) PriceBot.pkg
+19758 INFO: Building PKG (CArchive) PriceBot.pkg completed successfully.
+19776 INFO: Bootloader C:\Users\skalk\PycharmProjects\PythonProject\.venv\Lib\site-packages\PyInstaller\bootloader\Windows-64bit-intel\runw.exe
+19776 INFO: checking EXE
+19784 INFO: Rebuilding EXE-00.toc because PriceBot.exe missing
+19784 INFO: Building EXE from EXE-00.toc
+19784 INFO: Copying bootloader EXE to C:\Users\skalk\PycharmProjects\PythonProject\dist\PriceBot.exe
+19823 INFO: Copying icon to EXE
+19858 INFO: Copying 0 resources to EXE
+19858 INFO: Embedding manifest in EXE
+19862 INFO: Appending PKG archive to EXE
+19910 INFO: Fixing EXE headers
+21766 INFO: Building EXE from EXE-00.toc completed successfully.
+21782 INFO: Build complete! The results are available in: C:\Users\skalk\PycharmProjects\PythonProject\dist

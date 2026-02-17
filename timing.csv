@@ -1,0 +1,74 @@
+﻿ts,woj,stage,event,detail
+1760903046.757103,Dolnośląskie,links,start,C:\Users\skalk\PycharmProjects\speedrun\linki_mieszkania.py
+1760903047.100409,Dolnośląskie,links,log,[start] region='DolnoĹ›lÄ…skie' type='mieszkanie' output='C:\Users\skalk\PycharmProjects\speedrun\linki\DolnoĹ›lÄ…skie.csv'
+1760903047.100409,Dolnośląskie,links,log,[slug] 'DolnoĹ›lÄ…skie' -> 'dolnoslaskie'
+1760903047.1014068,Dolnośląskie,links,log,"[HTTP] Headers: {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0', 'Accept-Encoding': 'gzip, deflate', 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'Connection': 'keep-alive', 'Accept-Language': 'pl-PL,pl;q=0.9,en;q=0.8', 'Cache-Control': 'no-cache', 'Pragma': 'no-cache', 'Referer': 'https://www.otodom.pl/'}"
+1760903047.1014068,Dolnośląskie,links,log,[URL p1] https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/dolnoslaskie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=1
+1760903047.1014068,Dolnośląskie,links,log,[GET] https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/dolnoslaskie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=1
+1760903049.6724894,Dolnośląskie,links,log,[HTTP] status=200 final_url=https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/dolnoslaskie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=1 len=2117831
+1760903049.6797462,Dolnośląskie,links,log,"[baner] 1-72 ogĹ‚oszeĹ„ z 17141   -> lo=1, hi=72, total=17141"
+1760903049.6797462,Dolnośląskie,links,log,[pages] total=17141 per_page=72 -> max_pages=239
+1760903049.785821,Dolnośląskie,links,log,[page 1] dom=66 new=66 total_unique=66
+1760903049.7870033,Dolnośląskie,links,log,[unique after p1] 66
+1760903049.7870033,Dolnośląskie,links,log,[GET] https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/dolnoslaskie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=2
+1760903050.9929254,Dolnośląskie,links,log,[HTTP] status=200 final_url=https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/dolnoslaskie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=2 len=1995283
+1760903051.1094472,Dolnośląskie,links,log,[page 2] dom=59 new=59 total_unique=125
+1760903051.1148894,Dolnośląskie,links,log,[sleep] 0.60s
+1760903051.7095022,Dolnośląskie,links,log,[GET] https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/dolnoslaskie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=3
+1760903053.9404683,Dolnośląskie,links,log,[HTTP] status=200 final_url=https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/dolnoslaskie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=3 len=1981422
+1760903054.0335698,Dolnośląskie,links,log,[page 3] dom=52 new=50 total_unique=175
+1760903054.0335698,Dolnośląskie,links,log,[sleep] 0.60s
+1760903054.6345315,Dolnośląskie,links,log,[GET] https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/dolnoslaskie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=4
+1760903058.1830747,Dolnośląskie,links,log,[HTTP] status=200 final_url=https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/dolnoslaskie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=4 len=2019801
+1760903058.3122118,Dolnośląskie,links,log,[page 4] dom=58 new=55 total_unique=230
+1760903058.3122118,Dolnośląskie,links,log,[sleep] 0.60s
+1760903058.912372,Dolnośląskie,links,log,[GET] https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/dolnoslaskie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=5
+1760903061.5114226,Dolnośląskie,links,log,[HTTP] status=200 final_url=https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/dolnoslaskie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=5 len=1972360
+1760903061.6141746,Dolnośląskie,links,log,[page 5] dom=59 new=57 total_unique=287
+1760903061.615176,Dolnośląskie,links,log,[sleep] 0.60s
+1760903062.2155423,Dolnośląskie,links,log,[GET] https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/dolnoslaskie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=6
+1760903062.218757,Dolnośląskie,links,terminated,user
+1760903065.0037527,Podkarpackie,links,start,C:\Users\skalk\PycharmProjects\speedrun\linki_mieszkania.py
+1760903065.3278658,Podkarpackie,links,log,[start] region='Podkarpackie' type='mieszkanie' output='C:\Users\skalk\PycharmProjects\speedrun\linki\Podkarpackie.csv'
+1760903065.3278658,Podkarpackie,links,log,[slug] 'Podkarpackie' -> 'podkarpackie'
+1760903065.3278658,Podkarpackie,links,log,"[HTTP] Headers: {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0', 'Accept-Encoding': 'gzip, deflate', 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'Connection': 'keep-alive', 'Accept-Language': 'pl-PL,pl;q=0.9,en;q=0.8', 'Cache-Control': 'no-cache', 'Pragma': 'no-cache', 'Referer': 'https://www.otodom.pl/'}"
+1760903065.3278658,Podkarpackie,links,log,[URL p1] https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/podkarpackie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=1
+1760903065.3278658,Podkarpackie,links,log,[GET] https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/podkarpackie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=1
+1760903069.925925,Podkarpackie,links,log,[HTTP] status=200 final_url=https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/podkarpackie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=1 len=1989999
+1760903069.9313278,Podkarpackie,links,log,"[baner] 1-72 ogĹ‚oszeĹ„ z 4280   -> lo=1, hi=72, total=4280"
+1760903069.9313278,Podkarpackie,links,log,[pages] total=4280 per_page=72 -> max_pages=60
+1760903070.0382783,Podkarpackie,links,log,[page 1] dom=71 new=71 total_unique=71
+1760903070.0382783,Podkarpackie,links,log,[unique after p1] 71
+1760903070.0382783,Podkarpackie,links,log,[GET] https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/podkarpackie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=2
+1760903072.2889,Podkarpackie,links,log,[HTTP] status=200 final_url=https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/podkarpackie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=2 len=1968406
+1760903072.4113743,Podkarpackie,links,log,[page 2] dom=71 new=70 total_unique=141
+1760903072.4113743,Podkarpackie,links,log,[sleep] 0.60s
+1760903073.012654,Podkarpackie,links,log,[GET] https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/podkarpackie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=3
+1760903075.670413,Podkarpackie,links,log,[HTTP] status=200 final_url=https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/podkarpackie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=3 len=1946865
+1760903075.7676091,Podkarpackie,links,log,[page 3] dom=63 new=63 total_unique=204
+1760903075.7676091,Podkarpackie,links,log,[sleep] 0.60s
+1760903076.3683748,Podkarpackie,links,log,[GET] https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/podkarpackie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=4
+1760903079.6423051,Podkarpackie,links,log,[HTTP] status=200 final_url=https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/podkarpackie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=4 len=1942309
+1760903079.7707868,Podkarpackie,links,log,[page 4] dom=70 new=67 total_unique=271
+1760903079.7707868,Podkarpackie,links,log,[sleep] 0.60s
+1760903080.3710568,Podkarpackie,links,log,[GET] https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/podkarpackie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=5
+1760903083.4876003,Podkarpackie,links,log,[HTTP] status=200 final_url=https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/podkarpackie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=5 len=1876995
+1760903083.594141,Podkarpackie,links,log,[page 5] dom=73 new=73 total_unique=344
+1760903083.594141,Podkarpackie,links,log,[sleep] 0.60s
+1760903084.194685,Podkarpackie,links,log,[GET] https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/podkarpackie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=6
+1760903088.5923958,Podkarpackie,links,log,[HTTP] status=200 final_url=https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/podkarpackie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=6 len=1890617
+1760903088.7149236,Podkarpackie,links,log,[page 6] dom=66 new=66 total_unique=410
+1760903088.7149236,Podkarpackie,links,log,[sleep] 0.60s
+1760903089.3151214,Podkarpackie,links,log,[GET] https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/podkarpackie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=7
+1760903095.1912994,Podkarpackie,links,log,[HTTP] status=200 final_url=https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/podkarpackie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=7 len=1816593
+1760903095.2866592,Podkarpackie,links,log,[page 7] dom=63 new=62 total_unique=472
+1760903095.2870111,Podkarpackie,links,log,[sleep] 0.60s
+1760903095.8870173,Podkarpackie,links,log,[GET] https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/podkarpackie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=8
+1760903097.8459797,Podkarpackie,links,log,[HTTP] status=200 final_url=https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/podkarpackie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=8 len=1946582
+1760903097.9736693,Podkarpackie,links,log,[page 8] dom=69 new=67 total_unique=539
+1760903097.9736693,Podkarpackie,links,log,[sleep] 0.60s
+1760903098.5750504,Podkarpackie,links,log,[GET] https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/podkarpackie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=9
+1760903105.1379652,Podkarpackie,links,log,[HTTP] status=200 final_url=https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/podkarpackie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=9 len=1941591
+1760903105.2442625,Podkarpackie,links,log,[page 9] dom=65 new=63 total_unique=602
+1760903105.2442625,Podkarpackie,links,log,[sleep] 0.60s
+1760903105.8449008,Podkarpackie,links,log,[GET] https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/podkarpackie?limit=72&ownerTypeSingleSelect=ALL&by=DEFAULT&direction=DESC&page=10
