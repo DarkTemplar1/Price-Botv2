@@ -27,16 +27,76 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
 import unicodedata
 import re
-import csv
-import os
-import datetime
-try:
-    import requests  # type: ignore
-except Exception:  # pragma: no cover
-    requests = None  # type: ignore
 
 import pandas as pd
 import numpy as np
+
+
+def _filter_outliers_df(df, price_col: str):
+    """Zawsze usuwa wartości brzegowe z próby cen (dla wyliczeń).
+
+    Zasada:
+    - n<=2: nie da się sensownie przyciąć -> zwracamy bez zmian
+    - n=3..4: usuwamy min i max (zostają wartości środkowe)
+    - n>=5: filtr IQR (1.5*IQR); jeśli da zbyt mało danych -> fallback do min/max
+    """
+    import numpy as _np
+
+    if df is None or len(df.index) == 0:
+        return df, _np.array([], dtype=float)
+
+    prices_all = df[price_col].astype(float).replace([_np.inf, -_np.inf], _np.nan)
+    valid = prices_all.dropna()
+    n = int(len(valid))
+    if n <= 2:
+        return df, valid.to_numpy(dtype=float)
+
+    # Małe próby: obetnij skrajne wartości (min/max)
+    if n <= 4:
+        order = valid.sort_values()
+        keep_idx = order.iloc[1:-1].index
+        df2 = df.loc[keep_idx].copy()
+        prices2 = df2[price_col].astype(float).replace([_np.inf, -_np.inf], _np.nan).dropna()
+        return df2, prices2.to_numpy(dtype=float)
+
+    # IQR
+    q1 = _np.nanpercentile(valid, 25)
+    q3 = _np.nanpercentile(valid, 75)
+    iqr = q3 - q1
+    lo = q1 - 1.5 * iqr
+    hi = q3 + 1.5 * iqr
+
+    mask = (prices_all >= lo) & (prices_all <= hi)
+    df2 = df[mask].copy()
+    prices2 = df2[price_col].astype(float).replace([_np.inf, -_np.inf], _np.nan).dropna()
+
+    # Jeśli filtr IQR wyciął prawie wszystko, wróć do prostego min/max
+    if len(prices2) < 2:
+        order = valid.sort_values()
+        keep_idx = order.iloc[1:-1].index
+        df2 = df.loc[keep_idx].copy()
+        prices2 = df2[price_col].astype(float).replace([_np.inf, -_np.inf], _np.nan).dropna()
+
+    return df2, prices2.to_numpy(dtype=float)
+
+    q1 = _np.nanpercentile(valid, 25)
+    q3 = _np.nanpercentile(valid, 75)
+    iqr = q3 - q1
+    lo = q1 - 1.5 * iqr
+    hi = q3 + 1.5 * iqr
+
+    mask = (prices_all >= lo) & (prices_all <= hi)
+    df2 = df[mask].copy()
+    prices2 = df2[price_col].astype(float).replace([_np.inf, -_np.inf], _np.nan).dropna()
+
+    if len(prices2) < 2:
+        order = valid.sort_values()
+        keep_idx = order.iloc[1:-1].index
+        df2 = df.loc[keep_idx].copy()
+        prices2 = df2[price_col].astype(float).replace([_np.inf, -_np.inf], _np.nan).dropna()
+
+    return df2, prices2.to_numpy(dtype=float)
+
 
 
 # =========================
@@ -203,38 +263,17 @@ def _to_float_maybe(x):
 # =========================
 
 def _find_ludnosc_csv(base_dir: Path) -> Optional[Path]:
-    """
-    Szuka *tylko* pliku `ludnosc.csv` (pełnego, ~100k rekordów), żeby nie łapać
-    starych/tymczasowych plików typu `ludnosc_miejscowosci_*.csv`.
-
-    Priorytet:
-      1) zmienna środowiskowa LUDNOSC_CSV_PATH
-      2) base_dir/ludnosc.csv
-      3) katalog manual.py
-      4) bieżący katalog roboczy (CMD/Conda)
-    """
-    env = os.getenv("LUDNOSC_CSV_PATH")
-    candidates: List[Path] = []
-    if env:
-        candidates.append(Path(env))
-
-    candidates += [
+    candidates = [
         base_dir / "ludnosc.csv",
+        base_dir / "Ludnosc.csv",
+        base_dir / "ludnosc_miejscowosci.csv",
+        base_dir / "ludnosc_miejscowosci_uzupelnione_2025.csv",
         Path(__file__).resolve().parent / "ludnosc.csv",
         Path.cwd() / "ludnosc.csv",
     ]
-
-    def _looks_full(p: Path) -> bool:
-        try:
-            with p.open("r", encoding="utf-8-sig", errors="ignore") as f:
-                n = sum(1 for _ in f) - 1  # minus nagłówek
-            return n >= 50000
-        except Exception:
-            return True
-
     for p in candidates:
         try:
-            if p.exists() and p.is_file() and _looks_full(p):
+            if p.exists():
                 return p.resolve()
         except Exception:
             pass
@@ -243,25 +282,16 @@ def _find_ludnosc_csv(base_dir: Path) -> Optional[Path]:
 
 class PopulationResolver:
     """
-    Resolver ludności (manual) zrobiony tak samo jak w automacie:
-    - klucze kanoniczne woj|pow|gmi|mia|dzl
-    - hierarchia dopasowań + dodatkowe ścieżki gdy raport ma puste pow/gmi
-    - fallback po (woj + miejscowość) z preferencją dzielnicy
-    - opcjonalnie BDL API (wyłączone domyślnie; włącz MANUAL_USE_BDL_API=1)
-    - opcjonalny cache API: population_cache.csv w base_dir
+    Prosty resolver ludności na bazie lokalnego ludnosc.csv.
+    Klucz: woj|pow|gmi|mia|dzl (wszystko po kanonizacji).
     """
-
-    def __init__(self, local_csv: Optional[Path], api_cache_csv: Optional[Path] = None, use_api: bool = False):
+    def __init__(self, local_csv: Optional[Path]):
         self.local_csv = local_csv
-        self.api_cache_csv = api_cache_csv
-        self.use_api = bool(use_api)
         self._local: Dict[str, float] = {}
-        self._api_cache: Dict[str, float] = {}
-        self._dirty = False
-        self._load_local()
-        self._load_api_cache()
+        if local_csv:
+            self._load_local()
 
-    def _make_key(self, woj: str = "", powiat: str = "", gmina: str = "", miejscowosc: str = "", dzielnica: str = "") -> str:
+    def _make_key(self, woj="", powiat="", gmina="", miejscowosc="", dzielnica="") -> str:
         w = _canon_admin(woj, "woj")
         p = _canon_admin(powiat, "pow")
         g = _canon_admin(gmina, "gmi")
@@ -269,270 +299,53 @@ class PopulationResolver:
         d = _canon_admin(dzielnica, "dzl")
         return "|".join([w, p, g, m, d])
 
-    def _split_key(self, key: str) -> Tuple[str, str, str, str, str]:
-        parts = (key.split("|") + ["", "", "", "", ""])[:5]
-        return parts[0], parts[1], parts[2], parts[3], parts[4]
-
     def _candidate_keys(self, woj: str, powiat: str, gmina: str, miejscowosc: str, dzielnica: str) -> List[str]:
-        keys = [
+        # hierarchia: dokładnie -> bez dzielnicy -> gmina -> powiat -> woj
+        return [
             self._make_key(woj, powiat, gmina, miejscowosc, dzielnica),
             self._make_key(woj, powiat, gmina, miejscowosc, ""),
             self._make_key(woj, powiat, gmina, "", ""),
             self._make_key(woj, powiat, "", "", ""),
             self._make_key(woj, "", "", "", ""),
-            # dodatkowe ścieżki gdy raport ma puste powiat/gmina, a csv ma wypełnione:
-            self._make_key(woj, "", gmina, miejscowosc, dzielnica),
-            self._make_key(woj, "", gmina, miejscowosc, ""),
-            self._make_key(woj, "", gmina, "", ""),
-            self._make_key(woj, powiat, "", miejscowosc, dzielnica),
-            self._make_key(woj, powiat, "", miejscowosc, ""),
-            self._make_key(woj, "", "", miejscowosc, dzielnica),
-            self._make_key(woj, "", "", miejscowosc, ""),
         ]
-        out, seen = [], set()
-        for k in keys:
-            if k and k not in seen:
-                seen.add(k)
-                out.append(k)
-        return out
-
-    def _read_local_csv_any_sep(self, path: Path) -> pd.DataFrame:
-        for sep in [";", ",", "\t"]:
-            try:
-                return pd.read_csv(path, sep=sep, dtype=str, encoding="utf-8-sig", engine="python")
-            except Exception:
-                continue
-        return pd.read_csv(path, sep=None, dtype=str, encoding="utf-8-sig", engine="python")
 
     def _load_local(self) -> None:
-        if not self.local_csv or not self.local_csv.exists():
-            return
         try:
-            df = self._read_local_csv_any_sep(self.local_csv)
-
-            col_woj = _find_col(df.columns, ["Wojewodztwo", "Województwo"])
-            col_pow = _find_col(df.columns, ["Powiat"])
-            col_gmi = _find_col(df.columns, ["Gmina"])
-            col_mia = _find_col(df.columns, ["Miejscowosc", "Miejscowość", "Miasto"])
-            col_dzl = _find_col(df.columns, ["Dzielnica", "Osiedle"])
-            col_pop = _find_col(df.columns, ["ludnosc", "Ludnosc", "Liczba mieszkancow", "Liczba mieszkańców", "population", "Ludność"])
-
-            if not col_pop:
-                return
-
-            for _, r in df.iterrows():
-                pop_f = _to_float_maybe(r.get(col_pop))
-                if pop_f is None:
-                    continue
-                woj = r.get(col_woj, "") if col_woj else ""
-                powiat = r.get(col_pow, "") if col_pow else ""
-                gmina = r.get(col_gmi, "") if col_gmi else ""
-                miejsc = r.get(col_mia, "") if col_mia else ""
-                dziel = r.get(col_dzl, "") if col_dzl else ""
-
-                key = self._make_key(woj, powiat, gmina, miejsc, dziel)
-                if key:
-                    self._local[key] = float(pop_f)
+            df = pd.read_csv(self.local_csv, sep=";", encoding="utf-8", engine="python")
         except Exception:
-            return
+            # czasem bywa utf-8-sig
+            df = pd.read_csv(self.local_csv, sep=";", encoding="utf-8-sig", engine="python")
 
-    def _load_api_cache(self) -> None:
-        if not self.api_cache_csv or not self.api_cache_csv.exists():
-            return
-        try:
-            with self.api_cache_csv.open("r", encoding="utf-8-sig", newline="") as f:
-                rd = csv.DictReader(f)
-                for row in rd:
-                    pop = _to_float_maybe(row.get("population", ""))
-                    if pop is None:
-                        continue
-                    key = row.get("key") or self._make_key(
-                        row.get("woj", ""), row.get("powiat", ""), row.get("gmina", ""),
-                        row.get("miejscowosc", ""), row.get("dzielnica", "")
-                    )
-                    if key:
-                        self._api_cache[key] = float(pop)
-        except Exception:
-            return
+        # oczekiwane kolumny (format jak u Ciebie)
+        c_woj = _find_col(df.columns, ["Wojewodztwo", "Województwo"])
+        c_pow = _find_col(df.columns, ["Powiat"])
+        c_gmi = _find_col(df.columns, ["Gmina"])
+        c_mia = _find_col(df.columns, ["Miejscowosc", "Miejscowość", "Miasto"])
+        c_dzl = _find_col(df.columns, ["Dzielnica", "Osiedle"])
+        c_pop = _find_col(df.columns, ["ludnosc", "ludność", "Ludnosc", "Ludność"])
 
-    def _save_api_cache(self) -> None:
-        if not self._dirty or not self.api_cache_csv:
-            return
-        try:
-            self.api_cache_csv.parent.mkdir(parents=True, exist_ok=True)
-            with self.api_cache_csv.open("w", encoding="utf-8-sig", newline="") as f:
-                fieldnames = ["key", "woj", "powiat", "gmina", "miejscowosc", "dzielnica", "population"]
-                wr = csv.DictWriter(f, fieldnames=fieldnames)
-                wr.writeheader()
-                for key, pop in self._api_cache.items():
-                    woj, pow, gmi, mia, dzl = self._split_key(key)
-                    wr.writerow({
-                        "key": key,
-                        "woj": woj,
-                        "powiat": pow,
-                        "gmina": gmi,
-                        "miejscowosc": mia,
-                        "dzielnica": dzl,
-                        "population": pop,
-                    })
-            self._dirty = False
-        except Exception:
-            return
+        if not c_woj or not c_mia or not c_pop:
+            raise ManualUserError(f"ludnosc.csv ma nieoczekiwany format (brak kolumn: woj/miejscowosc/ludnosc): {self.local_csv}")
 
-    # ---- BDL API (opcjonalne) ----
-
-    BDL_BASE_URL = "https://bdl.stat.gov.pl/api/v1"
-    BDL_API_KEY_DEFAULT = "c804c054-f519-45b3-38f3-08de375a07dc"
-    _BDL_POP_VAR_ID: Optional[str] = None
-    _BDL_POP_VAR_ID_NOT_FOUND = "__NOT_FOUND__"
-
-    def _bdl_headers(self) -> dict:
-        if requests is None:
-            return {}
-        api_key = os.getenv("BDL_API_KEY") or os.getenv("GUS_BDL_API_KEY") or self.BDL_API_KEY_DEFAULT
-        if not api_key:
-            return {}
-        return {"X-ClientId": api_key, "Accept": "application/json"}
-
-    def _pick_latest_year(self) -> int:
-        return datetime.date.today().year - 1
-
-    def _get_population_var_id(self) -> Optional[str]:
-        if self._BDL_POP_VAR_ID == self._BDL_POP_VAR_ID_NOT_FOUND:
-            return None
-        if self._BDL_POP_VAR_ID:
-            return self._BDL_POP_VAR_ID
-
-        headers = self._bdl_headers()
-        if not headers:
-            return None
-
-        try:
-            url = f"{self.BDL_BASE_URL}/variables"
-            params = {"name": "ludność ogółem", "page-size": 50, "format": "json"}
-            r = requests.get(url, headers=headers, params=params, timeout=15)
-            if r.status_code == 200:
-                data = r.json()
-                for v in data.get("results", []):
-                    name = (v.get("name") or "").lower()
-                    if "ludność ogółem" in name or "ludnosc ogolem" in name or "population total" in name:
-                        self._BDL_POP_VAR_ID = str(v.get("id"))
-                        return self._BDL_POP_VAR_ID
-        except Exception:
-            pass
-
-        self._BDL_POP_VAR_ID = self._BDL_POP_VAR_ID_NOT_FOUND
-        return None
-
-    def _fetch_population_from_api(self, woj: str, powiat: str, gmina: str, miejscowosc: str) -> Optional[float]:
-        headers = self._bdl_headers()
-        if not headers:
-            return None
-
-        name_search = miejscowosc or gmina
-        if not name_search:
-            return None
-
-        try:
-            url_units = f"{self.BDL_BASE_URL}/units"
-            params_units = {"name": name_search, "level": "6", "page-size": 50, "format": "json"}
-            ru = requests.get(url_units, headers=headers, params=params_units, timeout=15)
-            if ru.status_code != 200:
-                return None
-            ju = ru.json()
-            units = ju.get("results", []) or []
-            if not units:
-                return None
-
-            def score(u):
-                nm = _plain(u.get("name") or "")
-                sc = 0
-                if _plain(name_search) == nm:
-                    sc += 5
-                elif _plain(name_search) in nm:
-                    sc += 3
-                if powiat and _plain(powiat) in nm:
-                    sc += 1
-                if woj and _plain(woj) in nm:
-                    sc += 1
-                return sc
-
-            units.sort(key=score, reverse=True)
-            unit_id = units[0].get("id")
-            if not unit_id:
-                return None
-        except Exception:
-            return None
-
-        var_id = self._get_population_var_id()
-        if not var_id:
-            return None
-
-        year = self._pick_latest_year()
-        try:
-            url_data = f"{self.BDL_BASE_URL}/data/by-unit/{unit_id}"
-            params_data = {"var-id": var_id, "year": str(year), "format": "json"}
-            rd = requests.get(url_data, headers=headers, params=params_data, timeout=20)
-            if rd.status_code != 200:
-                return None
-
-            jd = rd.json()
-            results = jd.get("results") or []
-            if not results:
-                return None
-
-            vals = results[0].get("values") or []
-            for v in vals:
-                raw = v[0] if isinstance(v, list) and len(v) >= 1 else v
-                pop = _to_float_maybe(raw)
-                if pop is not None:
-                    return float(pop)
-        except Exception:
-            return None
-
-        return None
-
-    def _fallback_by_woj_mia(self, woj: str, miejscowosc: str, dzielnica: str) -> Optional[float]:
-        woj_c = _canon_admin(woj, "woj")
-        mia_c = _canon_admin(miejscowosc, "mia")
-        dzl_c = _canon_admin(dzielnica, "dzl")
-        if not woj_c or not mia_c:
-            return None
-
-        best_with_dzl = None
-        best_any = None
-
-        for key, pop in self._local.items():
-            w, _, _, m, d = self._split_key(key)
-            if w != woj_c or m != mia_c:
+        # brakujące admin-y nie blokują działania
+        for _, r in df.iterrows():
+            woj = r[c_woj] if c_woj else ""
+            powiat = r[c_pow] if c_pow else ""
+            gmina = r[c_gmi] if c_gmi else ""
+            mia = r[c_mia] if c_mia else ""
+            dzl = r[c_dzl] if c_dzl else ""
+            pop = _to_float_maybe(r[c_pop])
+            if pop is None:
                 continue
-            if dzl_c and d == dzl_c:
-                best_with_dzl = pop if (best_with_dzl is None or pop > best_with_dzl) else best_with_dzl
-            else:
-                best_any = pop if (best_any is None or pop > best_any) else best_any
+            key = self._make_key(str(woj), str(powiat), str(gmina), str(mia), str(dzl))
+            self._local[key] = float(pop)
 
-        return best_with_dzl if best_with_dzl is not None else best_any
-
-    def get_population(self, woj: str = "", powiat: str = "", gmina: str = "", miejscowosc: str = "", dzielnica: str = "") -> Optional[float]:
-        for key in self._candidate_keys(woj, powiat, gmina, miejscowosc, dzielnica):
-            if key in self._local:
-                return float(self._local[key])
-            if key in self._api_cache:
-                return float(self._api_cache[key])
-
-        pop = self._fallback_by_woj_mia(woj, miejscowosc, dzielnica)
-        if pop is not None:
-            return float(pop)
-
-        if self.use_api:
-            pop = self._fetch_population_from_api(woj, powiat, gmina, miejscowosc)
-            if pop is not None:
-                key4 = self._make_key(woj, powiat, gmina, miejscowosc, "")
-                self._api_cache[key4] = float(pop)
-                self._dirty = True
-                self._save_api_cache()
-                return float(pop)
-
+    def get_population(self, woj="", powiat="", gmina="", miejscowosc="", dzielnica="") -> Optional[float]:
+        if not self._local:
+            return None
+        for k in self._candidate_keys(woj, powiat, gmina, miejscowosc, dzielnica):
+            if k in self._local:
+                return float(self._local[k])
         return None
 
 
@@ -935,8 +748,7 @@ def _get_cached_index_and_pop(base_dir: Path) -> Tuple[PolskaIndex, Optional[Pop
             need_reload_ludnosc = True
 
     if need_reload_ludnosc:
-        use_api = (os.getenv('MANUAL_USE_BDL_API') or '').strip() == '1'
-        pop_resolver = PopulationResolver(local_csv=ludnosc_path, api_cache_csv=(base_dir / 'population_cache.csv'), use_api=use_api) if ludnosc_path else PopulationResolver(local_csv=None, api_cache_csv=(base_dir / 'population_cache.csv'), use_api=use_api)
+        pop_resolver = PopulationResolver(ludnosc_path) if ludnosc_path else None
         _CACHE.update({
             "ludnosc_path": str(ludnosc_path) if ludnosc_path else None,
             "ludnosc_mtime": ludnosc_mtime,
@@ -1074,19 +886,9 @@ def compute_and_save_row(
             "area_range": (low_area, high_area),
         }
 
-    # outliers (bez ryzyka zejścia poniżej min_hits)
-    prices = df_sel[pl_index.c_price_num].astype(float)
-    if len(prices) >= max(10, int(min_hits)):
-        q1 = np.nanpercentile(prices, 25)
-        q3 = np.nanpercentile(prices, 75)
-        iqr = q3 - q1
-        lo = q1 - 1.5 * iqr
-        hi = q3 + 1.5 * iqr
-        df_filtered = df_sel[(prices >= lo) & (prices <= hi)].copy()
-        if len(df_filtered.index) >= int(min_hits):
-            df_sel = df_filtered
-            prices = df_sel[pl_index.c_price_num].astype(float)
-
+    # outliers — zawsze usuwamy wartości brzegowe w wyliczeniach
+    df_sel, _prices_arr = _filter_outliers_df(df_sel, pl_index.c_price_num)
+    prices = _prices_arr
     mean_price = float(np.nanmean(prices))
     mean_rounded = round(float(mean_price), 2)
 
@@ -1140,9 +942,9 @@ def compute_and_save_row(
 
     return {
         "kw": kw_value,
-        "mean": mean_rounded,
-        "corr": corrected_rounded,
-        "corr_value": value_rounded,
+        "avg": mean_rounded,
+        "corrected": corrected_rounded,
+        "value": value_rounded,
         "out_path": out_path,
         "stage": stage,
         "hits": int(len(df_sel)),

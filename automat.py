@@ -26,6 +26,73 @@ from dataclasses import dataclass
 import pandas as pd
 import numpy as np
 
+
+def _filter_outliers_df(df, price_col: str):
+    """Zawsze usuwa wartości brzegowe z próby cen (dla wyliczeń).
+
+    Zasada:
+    - n<=2: nie da się sensownie przyciąć -> zwracamy bez zmian
+    - n=3..4: usuwamy min i max (zostają wartości środkowe)
+    - n>=5: filtr IQR (1.5*IQR); jeśli da zbyt mało danych -> fallback do min/max
+    """
+    import numpy as _np
+
+    if df is None or len(df.index) == 0:
+        return df, _np.array([], dtype=float)
+
+    prices_all = df[price_col].astype(float).replace([_np.inf, -_np.inf], _np.nan)
+    valid = prices_all.dropna()
+    n = int(len(valid))
+    if n <= 2:
+        return df, valid.to_numpy(dtype=float)
+
+    # Małe próby: obetnij skrajne wartości (min/max)
+    if n <= 4:
+        order = valid.sort_values()
+        keep_idx = order.iloc[1:-1].index
+        df2 = df.loc[keep_idx].copy()
+        prices2 = df2[price_col].astype(float).replace([_np.inf, -_np.inf], _np.nan).dropna()
+        return df2, prices2.to_numpy(dtype=float)
+
+    # IQR
+    q1 = _np.nanpercentile(valid, 25)
+    q3 = _np.nanpercentile(valid, 75)
+    iqr = q3 - q1
+    lo = q1 - 1.5 * iqr
+    hi = q3 + 1.5 * iqr
+
+    mask = (prices_all >= lo) & (prices_all <= hi)
+    df2 = df[mask].copy()
+    prices2 = df2[price_col].astype(float).replace([_np.inf, -_np.inf], _np.nan).dropna()
+
+    # Jeśli filtr IQR wyciął prawie wszystko, wróć do prostego min/max
+    if len(prices2) < 2:
+        order = valid.sort_values()
+        keep_idx = order.iloc[1:-1].index
+        df2 = df.loc[keep_idx].copy()
+        prices2 = df2[price_col].astype(float).replace([_np.inf, -_np.inf], _np.nan).dropna()
+
+    return df2, prices2.to_numpy(dtype=float)
+
+    q1 = _np.nanpercentile(valid, 25)
+    q3 = _np.nanpercentile(valid, 75)
+    iqr = q3 - q1
+    lo = q1 - 1.5 * iqr
+    hi = q3 + 1.5 * iqr
+
+    mask = (prices_all >= lo) & (prices_all <= hi)
+    df2 = df[mask].copy()
+    prices2 = df2[price_col].astype(float).replace([_np.inf, -_np.inf], _np.nan).dropna()
+
+    if len(prices2) < 2:
+        order = valid.sort_values()
+        keep_idx = order.iloc[1:-1].index
+        df2 = df.loc[keep_idx].copy()
+        prices2 = df2[price_col].astype(float).replace([_np.inf, -_np.inf], _np.nan).dropna()
+
+    return df2, prices2.to_numpy(dtype=float)
+
+
 import tkinter as tk
 from tkinter import ttk
 import importlib.util
@@ -1147,19 +1214,9 @@ def _process_row(
         print(f"[Automat] {kw_value}: {msg} (zakres {low_area:.2f}-{high_area:.2f} m², stage={stage})")
         return
 
-    # usuwanie odstających (bez ryzyka, że spadnie poniżej min_hits)
-    prices = df_sel["_price_num"].astype(float)
-    if len(prices) >= max(10, int(min_hits)):
-        q1 = np.nanpercentile(prices, 25)
-        q3 = np.nanpercentile(prices, 75)
-        iqr = q3 - q1
-        lo = q1 - 1.5 * iqr
-        hi = q3 + 1.5 * iqr
-        df_filtered = df_sel[(prices >= lo) & (prices <= hi)].copy()
-        if len(df_filtered.index) >= int(min_hits):
-            df_sel = df_filtered
-            prices = df_sel["_price_num"].astype(float)
-
+    # outliers — zawsze usuwamy wartości brzegowe w wyliczeniach
+    df_sel, _prices_arr = _filter_outliers_df(df_sel, "_price_num")
+    prices = _prices_arr
     mean_price = float(np.nanmean(prices))
 
     # =========================
