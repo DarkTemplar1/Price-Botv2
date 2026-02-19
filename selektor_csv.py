@@ -11,6 +11,7 @@ import tkinter.ttk as ttk
 
 import pandas as pd
 import numpy as np
+import manual
 import subprocess
 import sys
 import threading  # <-- do wątku dla Automatu / Czyszczenia
@@ -83,72 +84,6 @@ def _xlsx_has_sheet(path: Path, sheet_name: str) -> bool:
     except Exception:
         return False
 
-
-def _sheet_header_keys(ws) -> set[str]:
-    """Zwraca znormalizowany zestaw nazw kolumn z wiersza 1 (bez wrażliwości na polskie znaki)."""
-    header = []
-    for cell in ws[1]:
-        header.append(str(cell.value).strip() if cell.value is not None else "")
-    while header and header[-1] == "":
-        header.pop()
-
-    def _k(x: str) -> str:
-        return _plain(x).strip().lower().replace(" ", "").replace("\xa0", "").replace("\t", "")
-
-    return {_k(h) for h in header if h}
-
-def ensure_report_sheet(path: Path) -> str:
-    """Jeśli w Excelu nie ma arkusza 'raport', wybiera najbardziej pasujący arkusz i ZMIENIA jego nazwę na 'raport'.
-
-    Zwraca nazwę arkusza, który został przemianowany (albo 'raport', jeśli już istniał).
-    """
-    if path.suffix.lower() not in (".xlsx", ".xlsm"):
-        return RAPORT_SHEET
-
-    keep_vba = path.suffix.lower() == ".xlsm"
-    wb = load_workbook(path, keep_vba=keep_vba)
-
-    if RAPORT_SHEET in wb.sheetnames:
-        return RAPORT_SHEET
-
-    # wybierz arkusz "najbardziej raportowy" (po nagłówkach)
-    must = {"nrkw"}  # absolutny sygnał (Nr KW)
-    nice = {"wojewodztwo", "powiat", "gmina", "miejscowosc", "dzielnica", "ulica", "obszar"}
-
-    best_name = None
-    best_score = -1
-
-    for name in wb.sheetnames:
-        if name == RAPORT_ODF:
-            continue
-        ws = wb[name]
-        keys = _sheet_header_keys(ws)
-        if not keys:
-            continue
-
-        score = 0
-        if must & keys:
-            score += 100
-        score += len(nice & keys)
-
-        # bonus jeśli wygląda jak "raport"
-        if "raport" in _plain(name).lower():
-            score += 5
-
-        if score > best_score:
-            best_score = score
-            best_name = name
-
-    if best_name is None:
-        best_name = wb.sheetnames[0]
-
-    ws = wb[best_name]
-
-    # przemianuj arkusz na 'raport' (bez kasowania innych arkuszy)
-    ws.title = RAPORT_SHEET
-    wb.save(path)
-    return best_name
-
 def _read_report_excel(path: Path, sheet_name: str = RAPORT_SHEET) -> pd.DataFrame:
     """Czyta WYŁĄCZNIE arkusz 'raport'. Jeśli nie istnieje – rzuca wyjątek."""
     if not _xlsx_has_sheet(path, sheet_name):
@@ -165,11 +100,8 @@ def _get_header_from_ws(ws) -> list[str]:
 
 def ensure_raport_odfiltrowane(path: Path) -> None:
     """
-    Zapewnia istnienie arkusza 'raport_odfiltrowane' i nagłówków zgodnych z arkuszem 'raport'.
-
-    WAŻNE: Nie usuwa żadnych istniejących danych z 'raport_odfiltrowane'.
-    - jeśli arkusza nie ma -> tworzy i wpisuje nagłówki
-    - jeśli arkusz istnieje -> nadpisuje TYLKO pierwszy wiersz nagłówkami (bez kasowania reszty)
+    Gwarantuje istnienie arkusza 'raport_odfiltrowane' z SAMYMI nagłówkami,
+    skopiowanymi z arkusza 'raport'. Nie rusza innych arkuszy.
     """
     if path.suffix.lower() not in (".xlsx", ".xlsm"):
         return
@@ -195,7 +127,11 @@ def ensure_raport_odfiltrowane(path: Path) -> None:
 
     ws_o.sheet_state = "visible"
 
-    # 3) wpisz/napraw nagłówek bez kasowania danych
+    # 3) wyczyść wszystko w arkuszu i wpisz tylko nagłówek
+    if ws_o.max_row >= 1:
+        ws_o.delete_rows(1, ws_o.max_row)
+
+    # wpisz nagłówek
     for c, name in enumerate(header, start=1):
         ws_o.cell(row=1, column=c).value = name
 
@@ -283,8 +219,6 @@ class App(tk.Tk):
         self.margin_m2_var = tk.DoubleVar(value=15.0)               # okno ± m²
         self.margin_pct_var = tk.DoubleVar(value=15.0)              # obniżka % ceny
         self.filter_choice_var = tk.StringVar(value="Brak filtra")
-
-        self.kw_jump_var = tk.StringVar(value="")  # skok do Nr KW
 
         # --- UI ---
         root = ttk.Frame(self, padding=10)
@@ -374,19 +308,8 @@ class App(tk.Tk):
             command=self.calc_and_save_row
         ).pack(side="left", padx=(16, 0))
 
-        ttk.Button(row_ctrl1, text="Odśwież", command=self.refresh_preview).pack(side="left", padx=(6, 0))
-
         self.automat_btn = tk.Button(row_ctrl1, text="Automat", command=self.automate)
         self.automat_btn.pack(side="left", padx=(6, 0))
-
-        # --- Skok do Nr KW ---
-        row_ctrl2 = ttk.Frame(group_ctrl)
-        row_ctrl2.pack(fill="x", padx=8, pady=(0, 6))
-        ttk.Label(row_ctrl2, text="Nr KW:").pack(side="left")
-        kw_entry = ttk.Entry(row_ctrl2, textvariable=self.kw_jump_var, width=34)
-        kw_entry.pack(side="left", padx=(6, 6))
-        kw_entry.bind("<Return>", lambda _e: self.goto_kw())
-        ttk.Button(row_ctrl2, text="Przejdź", command=self.goto_kw).pack(side="left")
 
         # ---------- Podgląd ----------
         group_preview = ttk.LabelFrame(root, text="Bieżący wiersz (podgląd)")
@@ -444,16 +367,6 @@ class App(tk.Tk):
     def load_dataframe(self, path: Path):
         try:
             if path.suffix.lower() in (".xlsx", ".xlsm"):
-                # Jeśli arkusz ma dowolną nazwę, a nie ma 'raport' -> przemianuj najlepszy na 'raport'
-                try:
-                    renamed_from = ensure_report_sheet(path)
-                    if renamed_from != RAPORT_SHEET:
-                        # renamed_from = oryginalna nazwa arkusza przemianowanego na 'raport'
-                        messagebox.showinfo("Arkusz raportu", f"Nie znaleziono arkusza '{RAPORT_SHEET}'.\nZmieniono arkusz '{renamed_from}' na '{RAPORT_SHEET}'.")
-                except Exception:
-                    # jeśli nie uda się przemianować, i tak spróbujemy czytać 'raport' (złapie się error niżej)
-                    pass
-
                 # ⛔ Podgląd ma być TYLKO arkusza 'raport'
                 self.df = _read_report_excel(path, sheet_name=RAPORT_SHEET)
 
@@ -473,99 +386,6 @@ class App(tk.Tk):
             self.df = None
             self.current_idx = None
             self.preview_label.config(text="{Brak arkusza 'raport'}")
-
-
-    # ---------- ODŚWIEŻ PODGLĄD / SKOK DO NR KW ----------
-
-    def refresh_preview(self):
-        """Przeładowuje dane z dysku i odświeża podgląd (np. po filtrach)."""
-        if not self.input_path:
-            messagebox.showinfo("Odśwież", "Najpierw wybierz plik raportu (u góry).")
-            return
-
-        old_idx = self.current_idx
-        old_kw = None
-
-        try:
-            if self.df is not None and self.current_idx is not None:
-                kw_col_old = _find_col(self.df.columns, PREVIEW_SPEC[0][1])
-                if kw_col_old:
-                    old_kw = _trim_after_semicolon(self.df.iloc[int(self.current_idx)][kw_col_old])
-        except Exception:
-            old_kw = None
-
-        # przeładuj
-        self.load_dataframe(self.input_path)
-
-        if self.df is None or len(self.df.index) == 0:
-            self.current_idx = None
-            self.preview_label.config(text="{Brak danych}")
-            return
-
-        target_idx = None
-
-        # spróbuj wrócić do tego samego Nr KW
-        if old_kw:
-            kw_col_new = _find_col(self.df.columns, PREVIEW_SPEC[0][1])
-            if kw_col_new:
-                try:
-                    target = _norm(str(old_kw))
-                    series = self.df[kw_col_new].astype(str).map(_trim_after_semicolon).map(_norm)
-                    hit = series[series == target]
-                    if not hit.empty:
-                        target_idx = int(hit.index[0])
-                except Exception:
-                    target_idx = None
-
-        # fallback: ten sam indeks
-        if target_idx is None and old_idx is not None:
-            try:
-                target_idx = min(max(int(old_idx), 0), len(self.df.index) - 1)
-            except Exception:
-                target_idx = 0
-
-        if target_idx is None:
-            target_idx = 0
-
-        self.goto_row(int(target_idx))
-
-    def goto_kw(self):
-        """Skacze w podglądzie do wiersza o podanym Nr KW."""
-        if self.df is None:
-            messagebox.showinfo("Nr KW", "Najpierw wybierz plik raportu (u góry).")
-            return
-
-        kw = (self.kw_jump_var.get() or "").strip()
-        if not kw:
-            messagebox.showinfo("Nr KW", "Wpisz numer księgi (Nr KW).")
-            return
-
-        kw_col = _find_col(self.df.columns, PREVIEW_SPEC[0][1])
-        if not kw_col:
-            messagebox.showerror("Nr KW", "Nie znaleziono kolumny 'Nr KW' w raporcie.")
-            return
-
-        target = _norm(kw)
-        try:
-            series = self.df[kw_col].astype(str).map(_trim_after_semicolon).map(_norm)
-        except Exception:
-            messagebox.showerror("Nr KW", "Nie mogę odczytać kolumny 'Nr KW' z raportu.")
-            return
-
-        # 1) dokładne dopasowanie
-        hits = series[series == target]
-        if hits.empty:
-            # 2) awaryjnie: contains (np. gdy ktoś wklei bez spacji/znaków)
-            try:
-                hits = series[series.str.contains(target, na=False)]
-            except Exception:
-                hits = hits
-
-        if hits.empty:
-            messagebox.showinfo("Nr KW", f"Nie znaleziono Nr KW: {kw}")
-            return
-
-        self.goto_row(int(hits.index[0]))
 
     # ---------- CZYSZCZENIE PLIKU Z LOGIEM ----------
 
@@ -615,12 +435,13 @@ class App(tk.Tk):
                 out, err = proc.communicate()
                 rc = proc.returncode
             except Exception as e:
-                def on_error():
+                err_msg = str(e)
+                def on_error(msg=err_msg):
                     try:
                         self.clean_btn.config(bg="#f28b82", activebackground="#ea4335")
                     except Exception:
                         pass
-                    messagebox.showerror("Czyszczenie", f"Nie udało się uruchomić {script_path.name}:\n{e}")
+                    messagebox.showerror("Czyszczenie", f"Nie udało się uruchomić {script_path.name}:\n{msg}")
                 self.after(0, on_error)
                 return
 
@@ -813,12 +634,13 @@ class App(tk.Tk):
             try:
                 rc = automat.main(["automat.py", raport, baza])
             except Exception as e:
-                def on_error():
+                err_msg = str(e)
+                def on_error(msg=err_msg):
                     try:
                         self.automat_btn.config(bg="", activebackground="")
                     except Exception:
                         pass
-                    messagebox.showerror("Automat", f"Błąd działania automat.py:\n{e}")
+                    messagebox.showerror("Automat", f"Błąd działania automat.py:\n{msg}")
                 self.after(0, on_error)
                 return
 
@@ -890,6 +712,10 @@ class App(tk.Tk):
     # ---------- KALKULACJA + ZAPIS ----------
 
     def calc_and_save_row(self):
+        """
+        Ręczne liczenie (NOWY algorytm) — logika jest w manual.py.
+        Przycisk w GUI: "Oblicz i zapisz ten wiersz".
+        """
         if self.df is None or self.current_idx is None:
             messagebox.showinfo("Zapis", "Najpierw wybierz plik raportu i wiersz.")
             return
@@ -897,178 +723,27 @@ class App(tk.Tk):
             messagebox.showerror("Brak folderu", "Wybierz 'Folder zapisu wyników'.")
             return
 
-        row = self.df.iloc[self.current_idx]
-
-        # Nr KW
-        kw_col = _find_col(
-            self.df.columns,
-            ["Nr KW", "nr_kw", "nrksiegi", "nr księgi", "nr_ksiegi", "numer księgi"],
-        )
-        kw_value = (
-            str(row[kw_col]).strip()
-            if (kw_col and pd.notna(row[kw_col]) and str(row[kw_col]).strip())
-            else f"WIERSZ_{self.current_idx+1}"
-        )
-
-        # Obszar
-        area_col = _find_col(self.df.columns, ["Obszar", "metry", "powierzchnia"])
-        area_val = _to_float_maybe(_trim_after_semicolon(row[area_col])) if area_col else None
-        if area_val is None:
-            messagebox.showerror("Brak obszaru", "Nie znalazłem wartości obszaru/metry.")
-            return
-
-        def _get(cands):
-            c = _find_col(self.df.columns, cands)
-            return _trim_after_semicolon(row[c]) if c else ""
-
-        woj_r = _get(["Województwo", "wojewodztwo", "woj"])
-        pow_r = _get(["Powiat"])
-        gmi_r = _get(["Gmina"])
-        mia_r = _get(["Miejscowość", "Miejscowosc", "Miasto"])
-        dzl_r = _get(["Dzielnica", "Osiedle"])
-        uli_r = _get(["Ulica", "Ulica(dla budynku)", "Ulica(dla lokalu)"])
-
         base_dir = Path(self.folder_var.get()).resolve()
-        polska_path = base_dir / "Polska.xlsx"
-        if not polska_path.exists():
-            messagebox.showerror("Brak pliku", f"Nie znaleziono pliku: {polska_path}")
-            return
-        try:
-            df_pl = pd.read_excel(polska_path)
-        except Exception as e:
-            messagebox.showerror("Błąd odczytu", f"Nie mogę wczytać {polska_path}:\n{e}")
-            return
-
-        col_area_pl = _find_col(df_pl.columns, ["metry", "powierzchnia", "m2", "obszar"])
-        col_price_pl = _find_col(df_pl.columns, ["cena_za_metr", "cena za metr", "cena za m²", "cena za m2", "cena/m2"])
-        if col_area_pl is None or col_price_pl is None:
-            messagebox.showerror("Kolumny w Polska.xlsx", "Nie znalazłem kolumn metrażu i/lub ceny za m² w Polska.xlsx.")
-            return
-
-        margin_m2 = float(self.margin_m2_var.get() or 0.0)
-        margin_pct = float(self.margin_pct_var.get() or 0.0)
-
-        delta = abs(margin_m2)
-        low, high = max(0.0, area_val - delta), area_val + delta
-
-        m = df_pl[col_area_pl].map(_to_float_maybe)
-        mask_area = (m >= low) & (m <= high)
-
-        def _eq_mask(col_candidates, value):
-            col = _find_col(df_pl.columns, col_candidates)
-            if col is None or not str(value).strip():
-                return pd.Series(True, index=df_pl.index)
-            s = df_pl[col].astype(str).str.strip().str.lower()
-            v = str(value).strip().lower()
-            return s == v
-
-        mask_full = mask_area.copy()
-        mask_full &= _eq_mask(["wojewodztwo", "województwo"], woj_r)
-        mask_full &= _eq_mask(["powiat"], pow_r)
-        mask_full &= _eq_mask(["gmina"], gmi_r)
-        mask_full &= _eq_mask(["miejscowosc", "miasto", "miejscowość"], mia_r)
-        if dzl_r:
-            mask_full &= _eq_mask(["dzielnica", "osiedle"], dzl_r)
-        if uli_r:
-            mask_full &= _eq_mask(["ulica"], uli_r)
-
-        df_sel = df_pl[mask_full].copy()
-
-        if df_sel.empty and uli_r:
-            mask_ul = mask_area.copy()
-            mask_ul &= _eq_mask(["wojewodztwo", "województwo"], woj_r)
-            mask_ul &= _eq_mask(["miejscowosc", "miasto", "miejscowość"], mia_r)
-            if dzl_r:
-                mask_ul &= _eq_mask(["dzielnica", "osiedle"], dzl_r)
-            mask_ul &= _eq_mask(["ulica"], uli_r)
-            df_sel = df_pl[mask_ul].copy()
-
-        if df_sel.empty and dzl_r:
-            mask_dziel = mask_area.copy()
-            mask_dziel &= _eq_mask(["wojewodztwo", "województwo"], woj_r)
-            mask_dziel &= _eq_mask(["miejscowosc", "miasto", "miejscowość"], mia_r)
-            mask_dziel &= _eq_mask(["dzielnica", "osiedle"], dzl_r)
-            df_sel = df_pl[mask_dziel].copy()
-
-        if df_sel.empty and mia_r:
-            mask_miasto = mask_area.copy()
-            mask_miasto &= _eq_mask(["wojewodztwo", "województwo"], woj_r)
-            mask_miasto &= _eq_mask(["miejscowosc", "miasto", "miejscowość"], mia_r)
-            df_sel = df_pl[mask_miasto].copy()
-
-        if df_sel.empty:
-            messagebox.showinfo("Brak dopasowań", f"Nie znaleziono rekordów w zakresie [{low:.2f}; {high:.2f}] m².")
-            return
-
-        prices = df_sel[col_price_pl].map(_to_float_maybe)
-        df_sel = df_sel[prices.notna()].copy()
-        prices = df_sel[col_price_pl].map(_to_float_maybe)
-
-        if len(prices) >= 4:
-            q1 = np.nanpercentile(prices, 25)
-            q3 = np.nanpercentile(prices, 75)
-            iqr = q3 - q1
-            lo = q1 - 1.5 * iqr
-            hi = q3 + 1.5 * iqr
-            df_sel = df_sel[(prices >= lo) & (prices <= hi)].copy()
-            prices = df_sel[col_price_pl].map(_to_float_maybe)
-
         out_dir = Path(self.output_folder_var.get() or self.folder_var.get()).resolve()
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        safe_kw = "".join(ch for ch in kw_value if ch not in "\\/:*?\"<>|")
-        out_path = out_dir / f"({safe_kw}).xlsx"
-
-        avg = float(np.nanmean(prices)) if not df_sel.empty else None
-
-        summary = {c: "" for c in df_sel.columns}
-        summary[col_price_pl] = avg if avg is not None else ""
-        df_out = pd.concat([df_sel, pd.DataFrame([summary])], ignore_index=True)
-        df_out.loc[len(df_out) - 1, "ŚREDNIA_CENA_M2"] = avg if avg is not None else ""
-
-        premium_cols = [
-            "cena","cena_za_metr","metry","liczba_pokoi","pietro","rynek","rok_budowy",
-            "material","wojewodztwo","powiat","gmina","miejscowosc","dzielnica","ulica","link",
-            "ŚREDNIA_CENA_M2",
-        ]
-        existing = [c for c in premium_cols if c in df_out.columns]
-        if existing:
-            df_out = df_out[existing]
 
         try:
-            df_out.to_excel(out_path, index=False)
+            res = manual.compute_and_save_row(
+                df_report=self.df,
+                idx=int(self.current_idx),
+                base_dir=base_dir,
+                out_dir=out_dir,
+                margin_m2_default=float(self.margin_m2_var.get() or 15.0),
+                margin_pct_default=float(self.margin_pct_var.get() or 15.0),
+                min_hits=5,
+            )
+        except manual.ManualUserError as e:
+            messagebox.showerror("Błąd", str(e))
+            return
         except Exception as e:
-            messagebox.showerror("Błąd zapisu", f"Nie udało się zapisać pliku:\n{out_path}\n\n{e}")
+            messagebox.showerror("Błąd", f"Nie udało się przeliczyć wiersza:\n{e}")
             return
 
-        if avg is not None and margin_pct > 0:
-            corrected = avg * (1 - margin_pct / 100.0)
-        else:
-            corrected = avg
-
-        col_avg = _find_col(self.df.columns, ["Średnia cena za m2 ( z bazy)", "Srednia cena za m2 ( z bazy)", "Średnia cena za m² (z bazy)"])
-        col_avg_corr = _find_col(self.df.columns, ["Średnia skorygowana cena za m2", "Srednia skorygowana cena za m2"])
-        col_stat = _find_col(self.df.columns, ["Statystyczna wartość nieruchomości", "Statystyczna wartosc nieruchomosci"])
-
-        if col_avg is None:
-            col_avg = VALUE_COLS[0]
-            if col_avg not in self.df.columns:
-                self.df[col_avg] = ""
-        if col_avg_corr is None:
-            col_avg_corr = VALUE_COLS[1]
-            if col_avg_corr not in self.df.columns:
-                self.df[col_avg_corr] = ""
-        if col_stat is None:
-            col_stat = VALUE_COLS[2]
-            if col_stat not in self.df.columns:
-                self.df[col_stat] = ""
-
-        self.df.at[self.current_idx, col_avg] = avg if avg is not None else ""
-        self.df.at[self.current_idx, col_avg_corr] = corrected if corrected is not None else ""
-        stat_val = (area_val * corrected) if (area_val is not None and corrected is not None) else ""
-        self.df.at[self.current_idx, col_stat] = stat_val
-
-        # ✅ Zapis Excela tylko do arkusza 'raport' (bez kasowania innych arkuszy)
+        # ✅ Zapis raportu: XLSX tylko arkusz 'raport' (bez kasowania innych arkuszy)
         try:
             if self.input_path and self.input_path.suffix.lower() in (".xlsx", ".xlsm"):
                 _write_df_to_sheet_preserve(self.input_path, self.df, sheet_name=RAPORT_SHEET)
@@ -1080,15 +755,29 @@ class App(tk.Tk):
                 f"Wyliczono wartości, ale nie udało się zapisać raportu:\n{self.input_path}\n\n{e}",
             )
 
-        msg = [f"Zapisano dobrane rekordy do: {out_path}"]
-        if avg is not None:
-            msg.append("Średnia cena/m²: " + f"{avg:,.2f}".replace(",", " ").replace(".", ","))
-        if corrected is not None and corrected != avg:
-            msg.append(f"Średnia po obniżce ({margin_pct:.1f}%): " + f"{corrected:,.2f}".replace(",", " ").replace(".", ","))
-        if isinstance(stat_val, (int, float)):
-            msg.append("Statystyczna wartość: " + f"{stat_val:,.2f}".replace(",", " ").replace(".", ","))
-        messagebox.showinfo("Zakończono", "\n".join(msg))
+        # komunikat
+        msg = []
+        if res.get("out_path"):
+            msg.append(f"Zapisano dobrane rekordy do: {res['out_path']}")
+        if isinstance(res.get("avg"), (int, float)):
+            msg.append("Średnia cena/m²: " + f"{res['avg']:,.2f}".replace(",", " ").replace(".", ","))
+        if isinstance(res.get("corrected"), (int, float)) and isinstance(res.get("avg"), (int, float)) and res.get("corrected") != res.get("avg"):
+            pct = None
+            margins = res.get("margins")
+            if isinstance(margins, (tuple, list)) and len(margins) >= 2:
+                pct = float(margins[1])
+            if pct is None:
+                try:
+                    pct = float(self.margin_pct_var.get() or 0.0)
+                except Exception:
+                    pct = 0.0
+            msg.append(f"Średnia po obniżce ({pct:.1f}%): " + f"{res['corrected']:,.2f}".replace(",", " ").replace(".", ","))
+        if isinstance(res.get("value"), (int, float)):
+            msg.append("Statystyczna wartość: " + f"{res['value']:,.2f}".replace(",", " ").replace(".", ","))
+        if res.get("stage"):
+            msg.append(f"Etap doboru: {res['stage']} (trafień: {int(res.get('hits', 0))})")
 
+        messagebox.showinfo("Zakończono", "\n".join(msg) if msg else "Zakończono.")
 def main():
     app = App()
     app.mainloop()
