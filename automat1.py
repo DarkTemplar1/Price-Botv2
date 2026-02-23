@@ -939,3 +939,229 @@ def classify_location(mia_c: str, pow_c: str, woj_c: str) -> str:
     if (mia_c or '') in aglo and (woj_c or '') == 'mazowieckie':
         return 'warsaw_aglo'
     return 'normal'
+# =========================
+# Core: przetwarzanie wiersza raportu (BRAKUJĄCE w wersji pliku)
+# + "skakanie" pomiarem brzegowym: 3/6/9/... aż do max z progu ludności
+# =========================
+
+VALUE_COLS = [
+    "Średnia cena za m2 ( z bazy)",
+    "Średnia skorygowana cena za m2",
+    "Statystyczna wartość nieruchomości",
+]
+
+def _ensure_value_cols(df_report: pd.DataFrame) -> None:
+    for c in VALUE_COLS:
+        if c not in df_report.columns:
+            df_report[c] = np.nan
+
+def _iter_m2_steps(max_margin: float, step: float = 3.0) -> List[float]:
+    """Zwraca listę: 3,6,9,...,max_margin (zawsze zawiera max_margin jako ostatni krok)."""
+    try:
+        max_m = float(max_margin)
+    except Exception:
+        max_m = 0.0
+    try:
+        st = float(step)
+    except Exception:
+        st = 3.0
+    if st <= 0:
+        st = 3.0
+    if max_m <= 0:
+        return []
+    steps: List[float] = []
+    k = 1
+    while k * st < max_m - 1e-9:
+        steps.append(round(k * st, 6))
+        k += 1
+        if k > 10_000:
+            break
+    steps.append(float(max_m))
+    return steps
+
+def _select_candidates_dynamic_margin(
+    pl: PolskaIndex,
+    base_mask: pd.Series,
+    area_target: float,
+    max_margin_m2: float,
+    step_m2: float,
+    prefer_mask: pd.Series | None,
+    min_hits: int,
+) -> tuple[pd.DataFrame, float, bool]:
+    """Zwraca (df_kandydatów, użyty_margin, czy_użyto_dzielnicy).
+
+    prefer_mask: jeśli podany, to najpierw próbujemy z nim (np. dzielnica),
+    a dopiero jak brak trafień -> bez niego.
+    """
+    best_df = pl.df.iloc[0:0].copy()
+    best_margin = 0.0
+    best_used_pref = False
+
+    for m in _iter_m2_steps(max_margin_m2, step_m2):
+        # z preferencją (dzielnica)
+        if prefer_mask is not None:
+            df1 = pl.df[base_mask & prefer_mask].copy()
+            df1 = df1[df1["_price_num"].notna()].copy()
+            df1 = df1[df1["_area_num"].notna()].copy()
+            df1 = df1[(df1["_area_num"] - area_target).abs() <= m].copy()
+            if len(df1.index) > len(best_df.index):
+                best_df, best_margin, best_used_pref = df1, m, True
+            if len(df1.index) >= min_hits:
+                return df1, m, True
+
+        # bez preferencji
+        df2 = pl.df[base_mask].copy()
+        df2 = df2[df2["_price_num"].notna()].copy()
+        df2 = df2[df2["_area_num"].notna()].copy()
+        df2 = df2[(df2["_area_num"] - area_target).abs() <= m].copy()
+        if len(df2.index) > len(best_df.index):
+            best_df, best_margin, best_used_pref = df2, m, False
+        if len(df2.index) >= min_hits:
+            return df2, m, False
+
+    return best_df, best_margin, best_used_pref
+
+def _process_row(
+    df_raport: pd.DataFrame,
+    idx: int,
+    pl: PolskaIndex,
+    margin_m2_default: float = 15.0,
+    margin_pct_default: float = 15.0,
+    pop_resolver: PopulationResolver | None = None,
+    *,
+    min_hits: int = 5,
+    step_m2: float = 3.0,
+) -> None:
+    """Liczy wartości dla jednego wiersza raportu i wpisuje do 3 kolumn.
+
+    Kluczowy wymóg: jeżeli w oknie ±m² jest za mało trafień,
+    automat "skacze" 3/6/9/... aż do max (ustalonego z progu ludności).
+    """
+    if df_raport is None or idx < 0 or idx >= len(df_raport.index):
+        return
+
+    _ensure_value_cols(df_raport)
+    row = df_raport.iloc[idx]
+
+    # --- kolumny raportu ---
+    col_woj = _find_col(df_raport.columns, ["Województwo", "Wojewodztwo", "woj"])
+    col_pow = _find_col(df_raport.columns, ["Powiat"])
+    col_gmi = _find_col(df_raport.columns, ["Gmina"])
+    col_mia = _find_col(df_raport.columns, ["Miejscowość", "Miejscowosc", "Miasto", "miejsc"])
+    col_dzl = _find_col(df_raport.columns, ["Dzielnica", "Osiedle"])
+    col_area = _find_col(df_raport.columns, ["Obszar", "metry", "powierzchnia"])
+
+    woj_raw = _trim_after_semicolon(row[col_woj]) if col_woj else ""
+    pow_raw = _trim_after_semicolon(row[col_pow]) if col_pow else ""
+    gmi_raw = _trim_after_semicolon(row[col_gmi]) if col_gmi else ""
+    mia_raw = _trim_after_semicolon(row[col_mia]) if col_mia else ""
+    dzl_raw = _trim_after_semicolon(row[col_dzl]) if col_dzl else ""
+    area_val = _to_float_maybe(row[col_area]) if col_area else None
+
+    if area_val is None or not mia_raw or not woj_raw:
+        # za mało danych – czyścimy wartości i wychodzimy
+        df_raport.at[df_raport.index[idx], VALUE_COLS[0]] = np.nan
+        df_raport.at[df_raport.index[idx], VALUE_COLS[1]] = np.nan
+        df_raport.at[df_raport.index[idx], VALUE_COLS[2]] = np.nan
+        return
+
+    # --- kanonizacja ---
+    woj_c = _canon_admin(woj_raw, "woj")
+    pow_c = _canon_admin(pow_raw, "pow")
+    gmi_c = _canon_admin(gmi_raw, "gmi")
+    mia_c = _canon_admin(mia_raw, "mia")
+    dzl_c = _canon_admin(dzl_raw, "dzl")
+
+    # --- ludność -> progi (max margin + % negocjacyjny) ---
+    pop = None
+    if pop_resolver is not None:
+        pop = pop_resolver.get_population(woj_raw, pow_raw, gmi_raw, mia_raw, dzl_raw)
+    margin_m2, margin_pct = rules_for_population(pop)
+    if not (isinstance(margin_m2, (int, float)) and margin_m2 > 0):
+        margin_m2 = float(margin_m2_default)
+    if not isinstance(margin_pct, (int, float)):
+        margin_pct = float(margin_pct_default)
+
+    # --- dobór zakresu terytorialnego (Warszawa/aglo/stolice woj/normal) ---
+    loc_class = classify_location(mia_c, pow_c, woj_c)
+
+    # bazowa maska terytorialna
+    df_pl = pl.df
+    base_mask = pd.Series(True, index=df_pl.index)
+
+    if pl.c_woj and woj_c:
+        base_mask &= _mask_eq_canon(df_pl, pl.c_woj, woj_c)
+
+    # stolice województw i Warszawa: szukamy tylko po mieście (ignorujemy pow/gmi, bo w raportach bywają rozjazdy)
+    if loc_class in ("voiv_capital", "warsaw_city"):
+        if pl.c_mia and mia_c:
+            base_mask &= _mask_eq_canon(df_pl, pl.c_mia, mia_c)
+
+    # aglomeracja Warszawska: szukamy po liście aglo w ramach Mazowieckiego
+    elif loc_class == "warsaw_aglo":
+        aglo = getattr(classify_location, "_aglo_cache", None)
+        if aglo is None:
+            try:
+                aglo = load_warsaw_agglomeration()
+            except Exception:
+                aglo = set(AGLO_WARSZAWA_DEFAULT)
+            setattr(classify_location, "_aglo_cache", aglo)
+        if pl.c_mia:
+            base_mask &= df_pl[pl.c_mia].astype(str).isin(list(aglo | {"warszawa"}))
+
+    # normal: gmina -> powiat -> woj
+    else:
+        # jeśli mamy gminę, trzymaj się gminy (najbardziej lokalnie)
+        if pl.c_gmi and gmi_c:
+            base_mask &= _mask_eq_canon(df_pl, pl.c_gmi, gmi_c)
+        elif pl.c_pow and pow_c:
+            base_mask &= _mask_eq_canon(df_pl, pl.c_pow, pow_c)
+        # else: już mamy woj
+
+    # preferencja dzielnicy (jeśli Polska.xlsx ma kolumnę dzielnica)
+    prefer_mask = None
+    if dzl_c and pl.c_dzl:
+        prefer_mask = _mask_eq_canon(df_pl, pl.c_dzl, dzl_c)
+
+    # --- SKAKANIE pomiarem brzegowym ---
+    cand_df, used_m, used_dzl = _select_candidates_dynamic_margin(
+        pl=pl,
+        base_mask=base_mask,
+        area_target=float(area_val),
+        max_margin_m2=float(margin_m2),
+        step_m2=float(step_m2),
+        prefer_mask=prefer_mask,
+        min_hits=int(min_hits),
+    )
+
+    if cand_df is None or len(cand_df.index) == 0:
+        df_raport.at[df_raport.index[idx], VALUE_COLS[0]] = np.nan
+        df_raport.at[df_raport.index[idx], VALUE_COLS[1]] = np.nan
+        df_raport.at[df_raport.index[idx], VALUE_COLS[2]] = np.nan
+        return
+
+    # zawsze usuwamy wartości brzegowe przed średnią
+    cand_df2, prices = _filter_outliers_df(cand_df, "_price_num")
+    avg = float(np.mean(prices)) if prices is not None and len(prices) else None
+
+    if avg is None:
+        df_raport.at[df_raport.index[idx], VALUE_COLS[0]] = np.nan
+        df_raport.at[df_raport.index[idx], VALUE_COLS[1]] = np.nan
+        df_raport.at[df_raport.index[idx], VALUE_COLS[2]] = np.nan
+        return
+
+    corrected = float(avg) * (1.0 - float(margin_pct) / 100.0)
+    value = corrected * float(area_val)
+
+    df_raport.at[df_raport.index[idx], VALUE_COLS[0]] = avg
+    df_raport.at[df_raport.index[idx], VALUE_COLS[1]] = corrected
+    df_raport.at[df_raport.index[idx], VALUE_COLS[2]] = value
+
+    # mały log diagnostyczny (pierwsze 10 wierszy)
+    if idx < 10:
+        print(
+            f"[Row {idx+1}] {woj_raw}/{mia_raw} area={area_val} -> "
+            f"pop={pop} max_m={margin_m2} step={step_m2} used_m={used_m} "
+            f"{'(dzielnica)' if used_dzl else ''} n={len(cand_df.index)} avg={avg:.2f} corr={corrected:.2f}"
+        )
+c
