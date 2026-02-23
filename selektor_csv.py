@@ -25,15 +25,18 @@ APP_TITLE = "PriceBot"
 RAPORT_SHEET = "raport"
 RAPORT_ODF = "raport_odfiltrowane"
 
+
 # ---------- Helpers nazewnicze ----------
 
 def _norm(s: str) -> str:
     return (s or "").strip().lower().replace(" ", "").replace("\xa0", "").replace("\t", "")
 
+
 def _plain(s: str) -> str:
     s = (s or "").lower()
     s = "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
     return s
+
 
 def _find_col(cols, candidates):
     """Zwróć istniejącą kolumnę dopasowaną do listy kandydatów (po normalizacji / zawieraniu)."""
@@ -49,6 +52,7 @@ def _find_col(cols, candidates):
             return c
     return None
 
+
 def _trim_after_semicolon(val):
     if pd.isna(val):
         return ""
@@ -56,6 +60,7 @@ def _trim_after_semicolon(val):
     if ";" in s:
         s = s.split(";", 1)[0].strip()
     return s
+
 
 def _to_float_maybe(x):
     """Parsuje liczby typu '101,62 m²', '52 m2', '11 999 zł/m²' itd."""
@@ -75,6 +80,7 @@ def _to_float_maybe(x):
     except Exception:
         return None
 
+
 # ---------- Excel: czytaj/zapisuj TYLKO arkusz "raport" (bez kasowania innych) ----------
 
 def _xlsx_has_sheet(path: Path, sheet_name: str) -> bool:
@@ -84,11 +90,13 @@ def _xlsx_has_sheet(path: Path, sheet_name: str) -> bool:
     except Exception:
         return False
 
+
 def _read_report_excel(path: Path, sheet_name: str = RAPORT_SHEET) -> pd.DataFrame:
     """Czyta WYŁĄCZNIE arkusz 'raport'. Jeśli nie istnieje – rzuca wyjątek."""
     if not _xlsx_has_sheet(path, sheet_name):
         raise RuntimeError(f"Plik nie zawiera arkusza '{sheet_name}'.")
     return pd.read_excel(path, sheet_name=sheet_name)
+
 
 def _get_header_from_ws(ws) -> list[str]:
     header = []
@@ -97,6 +105,7 @@ def _get_header_from_ws(ws) -> list[str]:
     while header and header[-1] == "":
         header.pop()
     return header
+
 
 def ensure_raport_odfiltrowane(path: Path) -> None:
     """
@@ -137,6 +146,7 @@ def ensure_raport_odfiltrowane(path: Path) -> None:
 
     wb.save(path)
 
+
 def _write_df_to_sheet_preserve(path: Path, df: pd.DataFrame, sheet_name: str = RAPORT_SHEET) -> None:
     """
     Zapisuje DataFrame do jednego arkusza (sheet_name) w pliku XLSX/XLSM
@@ -163,17 +173,18 @@ def _write_df_to_sheet_preserve(path: Path, df: pd.DataFrame, sheet_name: str = 
     except Exception:
         pass
 
+
 # ---------- USTAWIENIA PODGLĄDU ----------
 
 PREVIEW_SPEC = [
-    ("Nr KW",        ["Nr KW", "nr_ksiegi", "nrksiegi", "nr księgi", "numer księgi"]),
-    ("Województwo",  ["Województwo", "wojewodztwo", "woj"]),
-    ("Powiat",       ["Powiat"]),
-    ("Gmina",        ["Gmina"]),
-    ("Miejscowość",  ["Miejscowość", "Miejscowosc", "Miasto"]),
-    ("Dzielnica",    ["Dzielnica", "Osiedle"]),
-    ("Ulica",        ["Ulica", "Ulica(dla budynku)", "Ulica(dla lokalu)"]),
-    ("Obszar",       [
+    ("Nr KW", ["Nr KW", "nr_ksiegi", "nrksiegi", "nr księgi", "numer księgi"]),
+    ("Województwo", ["Województwo", "wojewodztwo", "woj"]),
+    ("Powiat", ["Powiat"]),
+    ("Gmina", ["Gmina"]),
+    ("Miejscowość", ["Miejscowość", "Miejscowosc", "Miasto"]),
+    ("Dzielnica", ["Dzielnica", "Osiedle"]),
+    ("Ulica", ["Ulica", "Ulica(dla budynku)", "Ulica(dla lokalu)"]),
+    ("Obszar", [
         "Obszar", "metry", "powierzchnia",
         "Nr działek po średniku",
         "Nr działek", "Obręb po średniku", "Obręb"
@@ -200,6 +211,7 @@ FILTER_SCRIPTS = {
     "Cofnij filtr": ["cofnij.py"],
 }
 
+
 # ---------- Główna klasa ----------
 
 class App(tk.Tk):
@@ -214,11 +226,15 @@ class App(tk.Tk):
 
         # Ustawienia
         self.input_file_var = tk.StringVar(value="")
-        self.folder_var = tk.StringVar(value=str(Path.home()))      # baza: tu jest Polska.xlsx
-        self.output_folder_var = tk.StringVar(value="")             # folder zapisu (Nr KW).xlsx
-        self.margin_m2_var = tk.DoubleVar(value=15.0)               # okno ± m²
-        self.margin_pct_var = tk.DoubleVar(value=15.0)              # obniżka % ceny
+        self.folder_var = tk.StringVar(value=str(Path.home()))  # baza: tu jest Polska.xlsx
+        self.output_folder_var = tk.StringVar(value="")  # folder zapisu (Nr KW).xlsx
+        self.margin_m2_var = tk.DoubleVar(value=15.0)  # okno ± m²
+        self.margin_pct_var = tk.DoubleVar(value=15.0)  # obniżka % ceny
         self.filter_choice_var = tk.StringVar(value="Brak filtra")
+        self.rows_count_var = tk.StringVar(value="Wiersze w raporcie: -")
+
+        self.goto_kw_var = tk.StringVar(value="")
+        self._kw_index: dict[str, int] = {}
 
         # --- UI ---
         root = ttk.Frame(self, padding=10)
@@ -270,6 +286,8 @@ class App(tk.Tk):
         cmb.pack(side="left", padx=(6, 6))
         cmb.current(0)
         ttk.Button(row_flt, text="Użyj filtru", command=self.apply_filter).pack(side="left")
+        ttk.Button(row_flt, text="Odśwież", command=self.refresh_preview).pack(side="left", padx=(6, 0))
+        ttk.Label(row_flt, textvariable=self.rows_count_var).pack(side="left", padx=(12, 0))
 
         # ---------- Folder wyników ----------
         group_out = ttk.LabelFrame(root, text="Folder zapisu wyników")
@@ -279,36 +297,50 @@ class App(tk.Tk):
         ttk.Entry(row_out, textvariable=self.output_folder_var).pack(side="left", fill="x", expand=True)
         ttk.Button(row_out, text="Wybierz folder...", command=self.choose_output_folder).pack(side="left", padx=(8, 0))
 
-        # ---------- Parametry ----------
-        group_ctrl = ttk.LabelFrame(root, text="Parametry i sterowanie")
-        group_ctrl.pack(fill="x", pady=(8, 0))
-        row_ctrl1 = ttk.Frame(group_ctrl)
-        row_ctrl1.pack(fill="x", padx=8, pady=6)
+        # ---------- Sterowanie ----------
+        group_nav = ttk.LabelFrame(root, text="Sterowanie")
+        group_nav.pack(fill="x", pady=(8, 0))
+        row_nav = ttk.Frame(group_nav)
+        row_nav.pack(fill="x", padx=8, pady=6)
 
-        ttk.Label(row_ctrl1, text="Pomiary brzegowe metrażu:").pack(side="left")
+        ttk.Button(row_nav, text="‹ Poprzedni", command=self.prev_row).pack(side="left")
+        ttk.Button(row_nav, text="Następny ›", command=self.next_row).pack(side="left", padx=(6, 0))
 
-        ttk.Label(row_ctrl1, text="± m²:").pack(side="left", padx=(8, 2))
+        ttk.Separator(row_nav, orient="vertical").pack(side="left", fill="y", padx=10)
+
+        ttk.Label(row_nav, text="Przejdź do Nr KW:").pack(side="left")
+        kw_entry = ttk.Entry(row_nav, textvariable=self.goto_kw_var, width=30)
+        kw_entry.pack(side="left", padx=(6, 6))
+        kw_entry.bind("<Return>", lambda _e: self.goto_kw())
+        ttk.Button(row_nav, text="Idź", command=self.goto_kw).pack(side="left")
+
+        # ---------- Obliczenia ----------
+        group_calc = ttk.LabelFrame(root, text="Obliczenia")
+        group_calc.pack(fill="x", pady=(8, 0))
+        row_calc = ttk.Frame(group_calc)
+        row_calc.pack(fill="x", padx=8, pady=6)
+
+        ttk.Label(row_calc, text="Pomiar brzegowy metrażu (± m²):").pack(side="left")
         ttk.Spinbox(
-            row_ctrl1,
+            row_calc,
             from_=0.0, to=200.0, increment=0.5,
             width=6, textvariable=self.margin_m2_var
-        ).pack(side="left")
-        ttk.Label(row_ctrl1, text="obniżka % ceny:").pack(side="left", padx=(12, 2))
+        ).pack(side="left", padx=(6, 14))
+
+        ttk.Label(row_calc, text="Obniżka ceny (%):").pack(side="left")
         ttk.Spinbox(
-            row_ctrl1,
+            row_calc,
             from_=0.0, to=100.0, increment=0.5,
             width=6, textvariable=self.margin_pct_var
-        ).pack(side="left")
+        ).pack(side="left", padx=(6, 14))
 
-        ttk.Button(row_ctrl1, text="‹ Poprzedni", command=self.prev_row).pack(side="left", padx=(16, 0))
-        ttk.Button(row_ctrl1, text="Następny ›", command=self.next_row).pack(side="left", padx=(6, 0))
         ttk.Button(
-            row_ctrl1,
+            row_calc,
             text="Oblicz i zapisz ten wiersz",
             command=self.calc_and_save_row
-        ).pack(side="left", padx=(16, 0))
+        ).pack(side="left")
 
-        self.automat_btn = tk.Button(row_ctrl1, text="Automat", command=self.automate)
+        self.automat_btn = tk.Button(row_calc, text="Automat", command=self.automate)
         self.automat_btn.pack(side="left", padx=(6, 0))
 
         # ---------- Podgląd ----------
@@ -370,6 +402,8 @@ class App(tk.Tk):
                 # ⛔ Podgląd ma być TYLKO arkusza 'raport'
                 self.df = _read_report_excel(path, sheet_name=RAPORT_SHEET)
 
+                self.update_rows_count()
+
                 # ✅ dopilnuj arkusza raport_odfiltrowane (techniczne)
                 try:
                     ensure_raport_odfiltrowane(path)
@@ -378,6 +412,9 @@ class App(tk.Tk):
             else:
                 # CSV nie ma arkuszy — podgląd OK
                 self.df = pd.read_csv(path, sep=None, engine="python")
+
+            self.rebuild_kw_index()
+            self.update_rows_count()
         except Exception as e:
             messagebox.showerror(
                 "Błąd odczytu",
@@ -386,6 +423,35 @@ class App(tk.Tk):
             self.df = None
             self.current_idx = None
             self.preview_label.config(text="{Brak arkusza 'raport'}")
+
+        self.update_rows_count()
+
+    def update_rows_count(self):
+        """Aktualizuje licznik wierszy w arkuszu 'raport' (do wyliczenia)."""
+        if getattr(self, "df", None) is None:
+            self.rows_count_var.set("Wiersze w raporcie: -")
+        else:
+            self.rows_count_var.set(f"Wiersze w raporcie: {len(self.df)}")
+
+    def refresh_preview(self):
+        """Odświeża podgląd po użyciu filtru: ponownie wczytuje arkusz 'raport' i aktualizuje licznik."""
+        in_path = self.input_file_var.get().strip()
+        if not in_path:
+            messagebox.showerror("Odśwież", "Najpierw wybierz plik raportu (u góry).")
+            return
+
+        self.input_path = Path(in_path)
+        self.load_dataframe(self.input_path)
+
+        if self.df is None or len(self.df.index) == 0:
+            self.current_idx = None
+            self.preview_label.config(text="{Brak danych w arkuszu 'raport'}")
+            messagebox.showinfo("Odśwież", "Odświeżono podgląd. Arkusz 'raport' jest pusty.")
+            return
+
+        i = 0 if self.current_idx is None else min(self.current_idx, len(self.df.index) - 1)
+        self.goto_row(i)
+        messagebox.showinfo("Odśwież", f"Odświeżono podgląd. Wierszy w arkuszu '{RAPORT_SHEET}': {len(self.df)}")
 
     # ---------- CZYSZCZENIE PLIKU Z LOGIEM ----------
 
@@ -436,12 +502,14 @@ class App(tk.Tk):
                 rc = proc.returncode
             except Exception as e:
                 err_msg = str(e)
+
                 def on_error(msg=err_msg):
                     try:
                         self.clean_btn.config(bg="#f28b82", activebackground="#ea4335")
                     except Exception:
                         pass
                     messagebox.showerror("Czyszczenie", f"Nie udało się uruchomić {script_path.name}:\n{msg}")
+
                 self.after(0, on_error)
                 return
 
@@ -469,7 +537,6 @@ class App(tk.Tk):
             self.after(0, on_done)
 
         threading.Thread(target=worker, daemon=True).start()
-
 
     def choose_base_folder(self):
         d = filedialog.askdirectory(title="Wybierz folder bazowy", initialdir=self.folder_var.get())
@@ -635,12 +702,14 @@ class App(tk.Tk):
                 rc = automat.main(["automat.py", raport, baza])
             except Exception as e:
                 err_msg = str(e)
+
                 def on_error(msg=err_msg):
                     try:
                         self.automat_btn.config(bg="", activebackground="")
                     except Exception:
                         pass
                     messagebox.showerror("Automat", f"Błąd działania automat.py:\n{msg}")
+
                 self.after(0, on_error)
                 return
 
@@ -660,6 +729,7 @@ class App(tk.Tk):
                     except Exception:
                         pass
                     messagebox.showerror("Automat", "automat.py zakończył się błędem (kod != 0). Sprawdź logi.")
+
             self.after(0, on_done)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -675,6 +745,68 @@ class App(tk.Tk):
             messagebox.showerror("Filtry", "Najpierw wybierz plik raportu (u góry).")
             return
         self._run_script(scripts, extra_args=["--in", in_path])
+
+    # ---------- Nr KW: indeks + skok ----------
+
+    def _kw_key(self, v) -> str:
+        """Normalizacja wartości Nr KW do wyszukiwania (bez spacji, uppercase, obcięcie po ';')."""
+        s = _trim_after_semicolon(v)
+        s = str(s).strip() if s is not None else ""
+        if not s:
+            return ""
+        return s.replace(" ", "").replace("\xa0", "").upper()
+
+    def rebuild_kw_index(self) -> None:
+        """Buduje mapę Nr KW -> indeks wiersza (pierwsze wystąpienie)."""
+        self._kw_index = {}
+        if self.df is None or len(self.df.index) == 0:
+            return
+        col = _find_col(
+            self.df.columns,
+            ["Nr KW", "nr kw", "NrKW", "nr_ksiegi", "nrksiegi", "nr księgi", "numer księgi"]
+        )
+        if not col:
+            return
+        for i, v in enumerate(self.df[col].tolist()):
+            key = self._kw_key(v)
+            if key and key not in self._kw_index:
+                self._kw_index[key] = i
+
+    def goto_kw(self) -> None:
+        """Przejdź do wiersza o podanym Nr KW."""
+        if self.df is None:
+            messagebox.showinfo("Nawigacja", "Najpierw wybierz plik raportu.")
+            return
+
+        target_raw = self.goto_kw_var.get()
+        target = self._kw_key(target_raw)
+
+        if not target:
+            messagebox.showinfo("Nawigacja", "Wpisz Nr KW, żeby przejść do konkretnego wiersza.")
+            return
+
+        # przebuduj indeks, jeśli pusty (np. po odświeżeniu)
+        if not getattr(self, "_kw_index", None):
+            self.rebuild_kw_index()
+
+        idx = self._kw_index.get(target)
+        if idx is None:
+            # awaryjnie: liniowe wyszukiwanie (gdyby kolumna się inaczej nazywała)
+            col = _find_col(
+                self.df.columns,
+                ["Nr KW", "nr kw", "NrKW", "nr_ksiegi", "nrksiegi", "nr księgi", "numer księgi"]
+            )
+            if col:
+                for i, v in enumerate(self.df[col].tolist()):
+                    if self._kw_key(v) == target:
+                        idx = i
+                        break
+
+        if idx is None:
+            messagebox.showinfo("Nawigacja", f"Nie znaleziono Nr KW: {target_raw.strip()}")
+            return
+
+        self.goto_row(int(idx))
 
     # ---------- Nawigacja ----------
 
@@ -700,7 +832,7 @@ class App(tk.Tk):
             return
         self.current_idx = i
         row = self.df.iloc[i]
-        lines = [f"Wiersz {i+1}/{len(self.df)}"]
+        lines = [f"Wiersz {i + 1}/{len(self.df)}"]
         for label, candidates in PREVIEW_SPEC:
             if any(_norm(c) in HIDDEN_PREVIEW_COLS for c in candidates):
                 continue
@@ -761,7 +893,8 @@ class App(tk.Tk):
             msg.append(f"Zapisano dobrane rekordy do: {res['out_path']}")
         if isinstance(res.get("avg"), (int, float)):
             msg.append("Średnia cena/m²: " + f"{res['avg']:,.2f}".replace(",", " ").replace(".", ","))
-        if isinstance(res.get("corrected"), (int, float)) and isinstance(res.get("avg"), (int, float)) and res.get("corrected") != res.get("avg"):
+        if isinstance(res.get("corrected"), (int, float)) and isinstance(res.get("avg"), (int, float)) and res.get(
+                "corrected") != res.get("avg"):
             pct = None
             margins = res.get("margins")
             if isinstance(margins, (tuple, list)) and len(margins) >= 2:
@@ -771,16 +904,20 @@ class App(tk.Tk):
                     pct = float(self.margin_pct_var.get() or 0.0)
                 except Exception:
                     pct = 0.0
-            msg.append(f"Średnia po obniżce ({pct:.1f}%): " + f"{res['corrected']:,.2f}".replace(",", " ").replace(".", ","))
+            msg.append(
+                f"Średnia po obniżce ({pct:.1f}%): " + f"{res['corrected']:,.2f}".replace(",", " ").replace(".", ","))
         if isinstance(res.get("value"), (int, float)):
             msg.append("Statystyczna wartość: " + f"{res['value']:,.2f}".replace(",", " ").replace(".", ","))
         if res.get("stage"):
             msg.append(f"Etap doboru: {res['stage']} (trafień: {int(res.get('hits', 0))})")
 
         messagebox.showinfo("Zakończono", "\n".join(msg) if msg else "Zakończono.")
+
+
 def main():
     app = App()
     app.mainloop()
+
 
 if __name__ == "__main__":
     main()

@@ -1164,4 +1164,3 @@ def _process_row(
             f"pop={pop} max_m={margin_m2} step={step_m2} used_m={used_m} "
             f"{'(dzielnica)' if used_dzl else ''} n={len(cand_df.index)} avg={avg:.2f} corr={corrected:.2f}"
         )
-c
