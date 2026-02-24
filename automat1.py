@@ -1088,10 +1088,48 @@ def _build_stage_masks(
     gmi_c: str,
     mia_c: str,
     loc_class: str,
-) -> list[tuple[str, pd.Series]]:
-    """Buduje listę (stage_name, maska) w kolejności od najbardziej do najmniej restrykcyjnej."""
+    *,
+    bucket_low: float | None = None,
+    bucket_high: float | None = None,
+    pop_resolver: PopulationResolver | None = None,
+    woj_raw: str = "",
+    pow_raw: str = "",
+    gmi_raw: str = "",
+    pop_cache: Dict[Tuple[str, str], float | None] | None = None,
+) -> list[tuple[str, pd.Series, int, str]]:
+    """Buduje listę etapów filtrowania: (stage_name, maska, min_hits_stage, stage_meta).
+
+    stage_meta to dodatkowe informacje diagnostyczne (np. bucket ludności), zawsze zaczyna się od '|'
+    albo jest pustym stringiem.
+    """
     df_pl = pl.df
-    masks: list[tuple[str, pd.Series]] = []
+    masks: list[tuple[str, pd.Series, int, str]] = []
+
+    if pop_cache is None:
+        pop_cache = {}
+
+    def _bucket_tag() -> str:
+        if bucket_low is None and bucket_high is None:
+            return ""
+        if bucket_low is not None and bucket_high is None:
+            return f"|bucket>={int(bucket_low)}"
+        if bucket_low is None and bucket_high is not None:
+            return f"|bucket<{int(bucket_high)}"
+        return f"|bucket={int(bucket_low)}-{int(bucket_high)}"
+
+    def _min_hits(stage_name: str) -> int:
+        # wymagania użytkownika:
+        # - dzielnica / miejscowość: 5
+        # - gmina / powiat: 10
+        # - województwo: 20
+        if stage_name in ("gmi", "pow"):
+            return 10
+        if stage_name == "woj":
+            return 20
+        if stage_name == "aglo":
+            # aglomeracja to szeroki zakres -> jak gmina/powiat
+            return 10
+        return 5
 
     base = pd.Series(True, index=df_pl.index)
     if pl.c_woj and woj_c:
@@ -1100,9 +1138,9 @@ def _build_stage_masks(
     # Warszawa / stolice województw: tylko miasto (w obrębie woj)
     if loc_class in ("voiv_capital", "warsaw_city"):
         if pl.c_mia and mia_c:
-            masks.append(("miasto", base & _mask_eq_canon(df_pl, pl.c_mia, mia_c)))
+            masks.append(("miasto", base & _mask_eq_canon(df_pl, pl.c_mia, mia_c), _min_hits("miasto"), ""))
         else:
-            masks.append(("woj", base))
+            masks.append(("woj", base, _min_hits("woj"), ""))
         return masks
 
     # Aglomeracja warszawska (bez Warszawy): miasta z listy aglo w obrębie Mazowieckiego
@@ -1117,55 +1155,136 @@ def _build_stage_masks(
 
         if pl.c_mia:
             col = df_pl[pl.c_mia].astype(str).str.strip().str.lower()
-            masks.append(("aglo", base & col.isin(list(aglo))))
+            masks.append(("aglo", base & col.isin(list(aglo)), _min_hits("aglo"), ""))
         else:
-            masks.append(("woj", base))
+            masks.append(("woj", base, _min_hits("woj"), ""))
         return masks
 
     # NORMAL: próbujemy pełniej, potem coraz luźniej.
     # 1) woj + pow + gmi + miasto
     if pl.c_pow and pow_c and pl.c_gmi and gmi_c and pl.c_mia and mia_c:
-        masks.append(("pow+gmi+miasto", base
-                      & _mask_eq_canon(df_pl, pl.c_pow, pow_c)
-                      & _mask_eq_canon(df_pl, pl.c_gmi, gmi_c)
-                      & _mask_eq_canon(df_pl, pl.c_mia, mia_c)))
+        masks.append((
+            "pow+gmi+miasto",
+            base
+            & _mask_eq_canon(df_pl, pl.c_pow, pow_c)
+            & _mask_eq_canon(df_pl, pl.c_gmi, gmi_c)
+            & _mask_eq_canon(df_pl, pl.c_mia, mia_c),
+            _min_hits("miasto"),
+            "",
+        ))
 
     # 2) woj + gmi + miasto
     if pl.c_gmi and gmi_c and pl.c_mia and mia_c:
-        masks.append(("gmi+miasto", base
-                      & _mask_eq_canon(df_pl, pl.c_gmi, gmi_c)
-                      & _mask_eq_canon(df_pl, pl.c_mia, mia_c)))
+        masks.append((
+            "gmi+miasto",
+            base
+            & _mask_eq_canon(df_pl, pl.c_gmi, gmi_c)
+            & _mask_eq_canon(df_pl, pl.c_mia, mia_c),
+            _min_hits("miasto"),
+            "",
+        ))
 
     # 3) woj + pow + miasto
     if pl.c_pow and pow_c and pl.c_mia and mia_c:
-        masks.append(("pow+miasto", base
-                      & _mask_eq_canon(df_pl, pl.c_pow, pow_c)
-                      & _mask_eq_canon(df_pl, pl.c_mia, mia_c)))
+        masks.append((
+            "pow+miasto",
+            base
+            & _mask_eq_canon(df_pl, pl.c_pow, pow_c)
+            & _mask_eq_canon(df_pl, pl.c_mia, mia_c),
+            _min_hits("miasto"),
+            "",
+        ))
 
     # 4) woj + miasto
     if pl.c_mia and mia_c:
-        masks.append(("miasto", base & _mask_eq_canon(df_pl, pl.c_mia, mia_c)))
+        masks.append(("miasto", base & _mask_eq_canon(df_pl, pl.c_mia, mia_c), _min_hits("miasto"), ""))
 
-    # 5) woj + gmi
+    # 5) woj + gmi  (+ miejscowości w tym samym progu ludności)
     if pl.c_gmi and gmi_c:
-        masks.append(("gmi", base & _mask_eq_canon(df_pl, pl.c_gmi, gmi_c)))
+        mm = base & _mask_eq_canon(df_pl, pl.c_gmi, gmi_c)
+        meta = ""
+        if pl.c_mia:
+            candidates = pl.by_gmina.get((str(woj_c), str(pow_c), str(gmi_c)), {})
+            if candidates and (bucket_low is not None or bucket_high is not None):
+                allowed = _filter_miejscowosci_by_bucket(
+                    candidates=candidates,
+                    bucket_low=bucket_low,
+                    bucket_high=bucket_high,
+                    pop_resolver=pop_resolver,
+                    woj_raw=woj_raw,
+                    pow_raw=pow_raw,
+                    gmi_raw=gmi_raw,
+                    scope=f"gmi:{woj_c}:{pow_c}:{gmi_c}",
+                    pop_cache=pop_cache,
+                )
+                if not allowed:
+                    allowed = list(candidates.keys())
+                    meta = _bucket_tag() + "|bucket_fallback"
+                else:
+                    meta = _bucket_tag()
+                mm &= df_pl[pl.c_mia].astype(str).isin(allowed)
+        masks.append(("gmi", mm, _min_hits("gmi"), meta))
 
-    # 6) woj + pow
+    # 6) woj + pow  (+ miejscowości w tym samym progu ludności)
     if pl.c_pow and pow_c:
-        masks.append(("pow", base & _mask_eq_canon(df_pl, pl.c_pow, pow_c)))
+        mm = base & _mask_eq_canon(df_pl, pl.c_pow, pow_c)
+        meta = ""
+        if pl.c_mia:
+            candidates = pl.by_powiat.get((str(woj_c), str(pow_c)), {})
+            if candidates and (bucket_low is not None or bucket_high is not None):
+                allowed = _filter_miejscowosci_by_bucket(
+                    candidates=candidates,
+                    bucket_low=bucket_low,
+                    bucket_high=bucket_high,
+                    pop_resolver=pop_resolver,
+                    woj_raw=woj_raw,
+                    pow_raw=pow_raw,
+                    gmi_raw="",
+                    scope=f"pow:{woj_c}:{pow_c}",
+                    pop_cache=pop_cache,
+                )
+                if not allowed:
+                    allowed = list(candidates.keys())
+                    meta = _bucket_tag() + "|bucket_fallback"
+                else:
+                    meta = _bucket_tag()
+                mm &= df_pl[pl.c_mia].astype(str).isin(allowed)
+        masks.append(("pow", mm, _min_hits("pow"), meta))
 
-    # 7) tylko woj
-    masks.append(("woj", base))
+    # 7) tylko woj  (+ miejscowości w tym samym progu ludności)
+    mm = base
+    meta = ""
+    if pl.c_mia:
+        candidates = pl.by_woj.get(str(woj_c), {})
+        if candidates and (bucket_low is not None or bucket_high is not None):
+            allowed = _filter_miejscowosci_by_bucket(
+                candidates=candidates,
+                bucket_low=bucket_low,
+                bucket_high=bucket_high,
+                pop_resolver=pop_resolver,
+                woj_raw=woj_raw,
+                pow_raw="",
+                gmi_raw="",
+                scope=f"woj:{woj_c}",
+                pop_cache=pop_cache,
+            )
+            if not allowed:
+                allowed = list(candidates.keys())
+                meta = _bucket_tag() + "|bucket_fallback"
+            else:
+                meta = _bucket_tag()
+            mm &= df_pl[pl.c_mia].astype(str).isin(allowed)
+    masks.append(("woj", mm, _min_hits("woj"), meta))
 
-    # usuń duplikaty masek po nazwie i treści (na wypadek braków kolumn)
-    uniq: list[tuple[str, pd.Series]] = []
+    # usuń duplikaty (na wypadek braków kolumn)
+    uniq: list[tuple[str, pd.Series, int, str]] = []
     seen = set()
-    for name, m in masks:
-        key = (name, int(m.sum()))
+    for name, mm, mh, meta in masks:
+        key = (name, int(mm.sum()), mh, meta)
         if key in seen:
             continue
         seen.add(key)
-        uniq.append((name, m))
+        uniq.append((name, mm, mh, meta))
     return uniq
 
 def _process_row(
@@ -1265,15 +1384,43 @@ def _process_row(
         prefer_mask = _mask_eq_canon(df_pl, pl.c_dzl, dzl_c)
 
     # --- Etapy filtrowania terytorialnego + skakanie pomiarem brzegowym ---
-    stage_masks = _build_stage_masks(pl, woj_c, pow_c, gmi_c, mia_c, loc_class)
+    # Dla zakresów gmina/powiat/województwo zawężamy miejscowości do tego samego "bucketa" ludności co miejscowość z raportu.
+    # Do filtrowania miejscowości po ludności używamy (domyślnie) ludności MIEJSCOWOŚCI,
+    # a nie dzielnicy — dzielnice potrafią mieć małe populacje i zbyt mocno zawężałyby bucket.
+    pop_for_bucket = pop
+    if pop_resolver is not None and dzl_raw:
+        try:
+            pop_city = pop_resolver.get_population(woj_raw, pow_raw, gmi_raw, mia_raw, "")
+            if pop_city is not None:
+                pop_for_bucket = pop_city
+        except Exception:
+            pass
+
+    bucket_low, bucket_high = _bucket_for_population(pop_for_bucket)
+    pop_cache_local: Dict[Tuple[str, str], float | None] = {}
+
+    stage_masks = _build_stage_masks(
+        pl, woj_c, pow_c, gmi_c, mia_c, loc_class,
+        bucket_low=bucket_low,
+        bucket_high=bucket_high,
+        pop_resolver=pop_resolver,
+        woj_raw=woj_raw,
+        pow_raw=pow_raw,
+        gmi_raw=gmi_raw,
+        pop_cache=pop_cache_local,
+    )
 
     best_df = pl.df.iloc[0:0].copy()
     best_hits = 0
     best_used_m = float(margin_m2)
     best_used_dzl = False
     best_stage_name = stage_masks[-1][0] if stage_masks else "woj"
+    best_stage_req = stage_masks[-1][2] if stage_masks else int(min_hits)
+    best_stage_meta = stage_masks[-1][3] if stage_masks else ""
 
-    for stage_name, base_mask in stage_masks:
+    for stage_name, base_mask, stage_min_hits, stage_meta in stage_masks:
+        stage_min_hits = int(stage_min_hits) if stage_min_hits is not None else int(min_hits)
+
         cand_df, used_m, used_dzl = _select_candidates_dynamic_margin(
             pl=pl,
             base_mask=base_mask,
@@ -1281,7 +1428,7 @@ def _process_row(
             max_margin_m2=float(margin_m2),
             step_m2=float(step_m2),
             prefer_mask=prefer_mask,
-            min_hits=int(min_hits),
+            min_hits=stage_min_hits,
         )
         cand_n = int(len(cand_df.index)) if cand_df is not None else 0
 
@@ -1289,19 +1436,25 @@ def _process_row(
             best_df, best_hits = cand_df, cand_n
             best_used_m, best_used_dzl = float(used_m), bool(used_dzl)
             best_stage_name = stage_name
+            best_stage_req = stage_min_hits
+            best_stage_meta = stage_meta or ""
 
-        if cand_n >= int(min_hits):
+        if cand_n >= stage_min_hits:
             best_df, best_hits = cand_df, cand_n
             best_used_m, best_used_dzl = float(used_m), bool(used_dzl)
             best_stage_name = stage_name
+            best_stage_req = stage_min_hits
+            best_stage_meta = stage_meta or ""
             break
 
     cand_df = best_df
     cand_n = int(len(cand_df.index)) if cand_df is not None else 0
-    stage_base = f"{loc_class}:{best_stage_name}|m={float(best_used_m):g}|{'dzielnica' if best_used_dzl else 'bez_dzielnicy'}"
+    req_min = int(best_stage_req) if best_stage_req is not None else int(min_hits)
+    meta = best_stage_meta or ""
+    stage_base = f"{loc_class}:{best_stage_name}{meta}|m={float(best_used_m):g}|{'dzielnica' if best_used_dzl else 'bez_dzielnicy'}"
 
-    if cand_df is None or cand_n < int(min_hits):
-        _set_status(NO_OFFERS_TEXT, cand_n, f"{stage_base}|hits<{int(min_hits)}")
+    if cand_df is None or cand_n < req_min:
+        _set_status(NO_OFFERS_TEXT, cand_n, f"{stage_base}|hits<{req_min}")
         return
 
     # Zawsze usuwamy wartości brzegowe przed średnią
