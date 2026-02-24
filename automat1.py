@@ -1038,16 +1038,23 @@ def _select_candidates_dynamic_margin(
     prefer_mask: pd.Series | None,
     min_hits: int,
 ) -> tuple[pd.DataFrame, float, bool]:
-    """Zwraca (df_kandydatów, użyty_margin, czy_użyto_dzielnicy).
+    """Zwraca (df_kandydatów, użyty_margin, czy_użyto_preferencji).
 
-    prefer_mask: jeśli podany, to najpierw próbujemy z nim (np. dzielnica),
-    a dopiero jak brak trafień -> bez niego.
+    Implementuje eskalację pomiarem brzegowym: 3/6/9/... aż do max_margin_m2.
+    Jeśli prefer_mask jest podany (np. dzielnica), to najpierw próbujemy z nim,
+    a dopiero potem bez niego.
+
+    Jeśli nie znajdzie nic nawet przy maksymalnym marginesie, zwraca pusty DF,
+    a jako used_margin zwraca max_margin_m2 (żeby w stage było widać, że przeszedł cały zakres).
     """
     best_df = pl.df.iloc[0:0].copy()
     best_margin = 0.0
     best_used_pref = False
 
-    for m in _iter_m2_steps(max_margin_m2, step_m2):
+    steps = _iter_m2_steps(max_margin_m2, step_m2)
+    last_tried = float(steps[-1]) if steps else 0.0
+
+    for m in steps:
         # z preferencją (dzielnica)
         if prefer_mask is not None:
             df1 = pl.df[base_mask & prefer_mask].copy()
@@ -1069,7 +1076,97 @@ def _select_candidates_dynamic_margin(
         if len(df2.index) >= min_hits:
             return df2, m, False
 
+    # jeżeli nie było żadnej poprawy (0 trafień wszędzie), pokaż w stage max margines
+    if best_df is None or len(best_df.index) == 0:
+        best_margin = last_tried
     return best_df, best_margin, best_used_pref
+
+def _build_stage_masks(
+    pl: PolskaIndex,
+    woj_c: str,
+    pow_c: str,
+    gmi_c: str,
+    mia_c: str,
+    loc_class: str,
+) -> list[tuple[str, pd.Series]]:
+    """Buduje listę (stage_name, maska) w kolejności od najbardziej do najmniej restrykcyjnej."""
+    df_pl = pl.df
+    masks: list[tuple[str, pd.Series]] = []
+
+    base = pd.Series(True, index=df_pl.index)
+    if pl.c_woj and woj_c:
+        base &= _mask_eq_canon(df_pl, pl.c_woj, woj_c)
+
+    # Warszawa / stolice województw: tylko miasto (w obrębie woj)
+    if loc_class in ("voiv_capital", "warsaw_city"):
+        if pl.c_mia and mia_c:
+            masks.append(("miasto", base & _mask_eq_canon(df_pl, pl.c_mia, mia_c)))
+        else:
+            masks.append(("woj", base))
+        return masks
+
+    # Aglomeracja warszawska (bez Warszawy): miasta z listy aglo w obrębie Mazowieckiego
+    if loc_class == "warsaw_aglo":
+        aglo = getattr(classify_location, "_aglo_cache", None)
+        if aglo is None:
+            try:
+                aglo = load_warsaw_agglomeration()
+            except Exception:
+                aglo = set(AGLO_WARSZAWA_DEFAULT)
+            setattr(classify_location, "_aglo_cache", aglo)
+
+        if pl.c_mia:
+            col = df_pl[pl.c_mia].astype(str).str.strip().str.lower()
+            masks.append(("aglo", base & col.isin(list(aglo))))
+        else:
+            masks.append(("woj", base))
+        return masks
+
+    # NORMAL: próbujemy pełniej, potem coraz luźniej.
+    # 1) woj + pow + gmi + miasto
+    if pl.c_pow and pow_c and pl.c_gmi and gmi_c and pl.c_mia and mia_c:
+        masks.append(("pow+gmi+miasto", base
+                      & _mask_eq_canon(df_pl, pl.c_pow, pow_c)
+                      & _mask_eq_canon(df_pl, pl.c_gmi, gmi_c)
+                      & _mask_eq_canon(df_pl, pl.c_mia, mia_c)))
+
+    # 2) woj + gmi + miasto
+    if pl.c_gmi and gmi_c and pl.c_mia and mia_c:
+        masks.append(("gmi+miasto", base
+                      & _mask_eq_canon(df_pl, pl.c_gmi, gmi_c)
+                      & _mask_eq_canon(df_pl, pl.c_mia, mia_c)))
+
+    # 3) woj + pow + miasto
+    if pl.c_pow and pow_c and pl.c_mia and mia_c:
+        masks.append(("pow+miasto", base
+                      & _mask_eq_canon(df_pl, pl.c_pow, pow_c)
+                      & _mask_eq_canon(df_pl, pl.c_mia, mia_c)))
+
+    # 4) woj + miasto
+    if pl.c_mia and mia_c:
+        masks.append(("miasto", base & _mask_eq_canon(df_pl, pl.c_mia, mia_c)))
+
+    # 5) woj + gmi
+    if pl.c_gmi and gmi_c:
+        masks.append(("gmi", base & _mask_eq_canon(df_pl, pl.c_gmi, gmi_c)))
+
+    # 6) woj + pow
+    if pl.c_pow and pow_c:
+        masks.append(("pow", base & _mask_eq_canon(df_pl, pl.c_pow, pow_c)))
+
+    # 7) tylko woj
+    masks.append(("woj", base))
+
+    # usuń duplikaty masek po nazwie i treści (na wypadek braków kolumn)
+    uniq: list[tuple[str, pd.Series]] = []
+    seen = set()
+    for name, m in masks:
+        key = (name, int(m.sum()))
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append((name, m))
+    return uniq
 
 def _process_row(
     df_raport: pd.DataFrame,
@@ -1082,19 +1179,14 @@ def _process_row(
     min_hits: int = 5,
     step_m2: float = 3.0,
 ) -> None:
-    """Liczy wartości dla jednego wiersza raportu i wpisuje do kolumn:
-      - hits (ile ogłoszeń znaleziono w wybranym zakresie)
-      - stage (na jakim etapie znaleziono)
-      - Średnia cena za m2 ( z bazy)
-      - Średnia skorygowana cena za m2
-      - Statystyczna wartość nieruchomości
+    """Przetwarza pojedynczy wiersz raportu i wpisuje wyniki.
 
-    Wymogi:
-      - Jeśli brak danych adresowych (Województwo/Powiat/Gmina/Miejscowość) -> wpisz 'brak adresu'
-        w kolumnie Średnia cena za m2 ( z bazy).
-      - Jeśli po przejściu całego algorytmu brak wystarczających trafień -> wpisz 'brak ogłoszeń w zakresie'
-        w kolumnie Średnia cena za m2 ( z bazy).
-      - Skakanie pomiarem brzegowym: 3/6/9/... aż do max z progu ludności.
+    - Jeśli brak danych adresowych (Województwo/Powiat/Gmina/Miejscowość) -> 'brak adresu'
+      w kolumnie 'Średnia cena za m2 ( z bazy)' oraz hits=0.
+    - Jeśli po przejściu całej logiki nie ma min_hits ogłoszeń -> 'brak ogłoszeń w zakresie'
+      w kolumnie 'Średnia cena za m2 ( z bazy)' + hits + stage.
+    - Eskalacja pomiarem brzegowym: 3/6/9/... aż do max z progu ludności.
+    - Stage pokazuje etap filtrowania terytorialnego, margines m² i czy użyto dzielnicy.
     """
     if df_raport is None or idx < 0 or idx >= len(df_raport.index):
         return
@@ -1125,7 +1217,7 @@ def _process_row(
     col_dzl = _find_col(df_raport.columns, ["Dzielnica", "Osiedle"])
     col_area = _find_col(df_raport.columns, ["Obszar", "metry", "powierzchnia"])
 
-    # Jeżeli brakuje kolumn adresowych – traktuj jak brak adresu (wymóg użytkownika)
+    # Brak kolumn adresowych -> brak adresu (wymóg)
     if not (col_woj and col_pow and col_gmi and col_mia):
         _set_status(MISSING_ADDR_TEXT, 0, "brak_kolumn_adresu")
         return
@@ -1137,12 +1229,10 @@ def _process_row(
     dzl_raw = _trim_after_semicolon(row[col_dzl]) if col_dzl else ""
     area_val = _to_float_maybe(row[col_area]) if col_area else None
 
-    # Brak wartości w kluczowych polach adresu -> "brak adresu"
     if not woj_raw or not pow_raw or not gmi_raw or not mia_raw:
         _set_status(MISSING_ADDR_TEXT, 0, "brak_adresu")
         return
 
-    # Brak metrażu – nie mamy jak liczyć (osobny status diagnostyczny)
     if area_val is None:
         _set_status(MISSING_AREA_TEXT, 0, "brak_metrazu")
         return
@@ -1158,6 +1248,7 @@ def _process_row(
     pop = None
     if pop_resolver is not None:
         pop = pop_resolver.get_population(woj_raw, pow_raw, gmi_raw, mia_raw, dzl_raw)
+
     margin_m2, margin_pct = rules_for_population(pop)
 
     if not (isinstance(margin_m2, (int, float)) and float(margin_m2) > 0):
@@ -1165,61 +1256,50 @@ def _process_row(
     if not isinstance(margin_pct, (int, float)):
         margin_pct = float(margin_pct_default)
 
-    # --- dobór zakresu terytorialnego (Warszawa/aglo/stolice woj/normal) ---
     loc_class = classify_location(mia_c, pow_c, woj_c)
 
-    # bazowa maska terytorialna
+    # preferencja dzielnicy
     df_pl = pl.df
-    base_mask = pd.Series(True, index=df_pl.index)
-
-    if pl.c_woj and woj_c:
-        base_mask &= _mask_eq_canon(df_pl, pl.c_woj, woj_c)
-
-    # stolice województw i Warszawa: szukamy tylko po mieście (ignorujemy pow/gmi)
-    if loc_class in ("voiv_capital", "warsaw_city"):
-        if pl.c_mia and mia_c:
-            base_mask &= _mask_eq_canon(df_pl, pl.c_mia, mia_c)
-
-    # aglomeracja Warszawska: lista aglo w ramach Mazowieckiego
-    elif loc_class == "warsaw_aglo":
-        aglo = getattr(classify_location, "_aglo_cache", None)
-        if aglo is None:
-            try:
-                aglo = load_warsaw_agglomeration()
-            except Exception:
-                aglo = set(AGLO_WARSZAWA_DEFAULT)
-            setattr(classify_location, "_aglo_cache", aglo)
-        if pl.c_mia:
-            # UWAGA: w tej wersji aglo = "reszta aglo" (bez Warszawy) – dokładnie jak w loaderze.
-            base_mask &= df_pl[pl.c_mia].astype(str).isin(list(aglo))
-
-    # normal: gmina -> powiat -> woj
-    else:
-        if pl.c_gmi and gmi_c:
-            base_mask &= _mask_eq_canon(df_pl, pl.c_gmi, gmi_c)
-        elif pl.c_pow and pow_c:
-            base_mask &= _mask_eq_canon(df_pl, pl.c_pow, pow_c)
-
-    # preferencja dzielnicy (jeśli Polska.xlsx ma kolumnę dzielnica)
     prefer_mask = None
     if dzl_c and pl.c_dzl:
         prefer_mask = _mask_eq_canon(df_pl, pl.c_dzl, dzl_c)
 
-    # --- SKAKANIE pomiarem brzegowym ---
-    cand_df, used_m, used_dzl = _select_candidates_dynamic_margin(
-        pl=pl,
-        base_mask=base_mask,
-        area_target=float(area_val),
-        max_margin_m2=float(margin_m2),
-        step_m2=float(step_m2),
-        prefer_mask=prefer_mask,
-        min_hits=int(min_hits),
-    )
+    # --- Etapy filtrowania terytorialnego + skakanie pomiarem brzegowym ---
+    stage_masks = _build_stage_masks(pl, woj_c, pow_c, gmi_c, mia_c, loc_class)
 
+    best_df = pl.df.iloc[0:0].copy()
+    best_hits = 0
+    best_used_m = float(margin_m2)
+    best_used_dzl = False
+    best_stage_name = stage_masks[-1][0] if stage_masks else "woj"
+
+    for stage_name, base_mask in stage_masks:
+        cand_df, used_m, used_dzl = _select_candidates_dynamic_margin(
+            pl=pl,
+            base_mask=base_mask,
+            area_target=float(area_val),
+            max_margin_m2=float(margin_m2),
+            step_m2=float(step_m2),
+            prefer_mask=prefer_mask,
+            min_hits=int(min_hits),
+        )
+        cand_n = int(len(cand_df.index)) if cand_df is not None else 0
+
+        if cand_n > best_hits:
+            best_df, best_hits = cand_df, cand_n
+            best_used_m, best_used_dzl = float(used_m), bool(used_dzl)
+            best_stage_name = stage_name
+
+        if cand_n >= int(min_hits):
+            best_df, best_hits = cand_df, cand_n
+            best_used_m, best_used_dzl = float(used_m), bool(used_dzl)
+            best_stage_name = stage_name
+            break
+
+    cand_df = best_df
     cand_n = int(len(cand_df.index)) if cand_df is not None else 0
-    stage_base = f"{loc_class}|m={float(used_m):g}|{'dzielnica' if used_dzl else 'bez_dzielnicy'}"
+    stage_base = f"{loc_class}:{best_stage_name}|m={float(best_used_m):g}|{'dzielnica' if best_used_dzl else 'bez_dzielnicy'}"
 
-    # Brak wystarczającej liczby trafień po przejściu całego algorytmu
     if cand_df is None or cand_n < int(min_hits):
         _set_status(NO_OFFERS_TEXT, cand_n, f"{stage_base}|hits<{int(min_hits)}")
         return
@@ -1227,20 +1307,10 @@ def _process_row(
     # Zawsze usuwamy wartości brzegowe przed średnią
     cand_df2, prices = _filter_outliers_df(cand_df, "_price_num")
     avg = float(np.mean(prices)) if prices is not None and len(prices) else None
-
     if avg is None:
-        _set_status(NO_OFFERS_TEXT, cand_n, f"{stage_base}|outlier_empty")
+        _set_status(NO_OFFERS_TEXT, cand_n, f"{stage_base}|no_price")
         return
 
-    corrected = float(avg) * (1.0 - float(margin_pct) / 100.0)
+    corrected = float(avg) * (1.0 - (float(margin_pct) / 100.0))
     value = corrected * float(area_val)
-
     _set_values(avg, corrected, value, cand_n, stage_base)
-
-    # mały log diagnostyczny (pierwsze 10 wierszy)
-    if idx < 10:
-        print(
-            f"[Row {idx+1}] {woj_raw}/{mia_raw} area={area_val} -> "
-            f"hits={cand_n} stage={stage_base} pop={pop} max_m={margin_m2} step={step_m2} "
-            f"avg={avg:.2f} corr={corrected:.2f}"
-        )
