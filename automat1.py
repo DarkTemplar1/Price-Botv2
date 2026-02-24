@@ -950,10 +950,60 @@ VALUE_COLS = [
     "Statystyczna wartość nieruchomości",
 ]
 
-def _ensure_value_cols(df_report: pd.DataFrame) -> None:
-    for c in VALUE_COLS:
+HITS_COL = "hits"
+STAGE_COL = "stage"
+
+# kolumna "kotwica" – dokładnie między nią a VALUE_COLS[0] wstawiamy hits+stage
+ANCHOR_COL = "Czy udziały?"
+
+MISSING_ADDR_TEXT = "brak adresu"
+NO_OFFERS_TEXT = "brak ogłoszeń w zakresie"
+MISSING_AREA_TEXT = "brak metrażu"
+
+def ensure_report_columns(df_report: pd.DataFrame) -> None:
+    """Zapewnia, że raport ma kolumny wynikowe + diagnostyczne (hits/stage).
+    Nie zmienia kolejności kolumn – do tego służy reorder_report_columns().
+    """
+    if df_report is None:
+        return
+    for c in [HITS_COL, STAGE_COL, *VALUE_COLS]:
         if c not in df_report.columns:
             df_report[c] = np.nan
+
+def reorder_report_columns(df_report: pd.DataFrame) -> pd.DataFrame:
+    """Zwraca DF z uporządkowanymi kolumnami:
+    ... 'Czy udziały?' , hits , stage , 'Średnia cena za m2 ( z bazy)' , ...
+    """
+    if df_report is None or df_report.empty:
+        return df_report
+    ensure_report_columns(df_report)
+
+    cols = list(df_report.columns)
+
+    # nic nie robimy, jeśli nie mamy kotwicy – tylko upewniamy się, że kolumny istnieją
+    if ANCHOR_COL not in cols:
+        return df_report
+
+    desired = [HITS_COL, STAGE_COL, VALUE_COLS[0]]
+
+    # usuń desired z bieżącej listy
+    for c in desired:
+        if c in cols:
+            cols.remove(c)
+
+    pos = cols.index(ANCHOR_COL) + 1
+    cols[pos:pos] = desired
+
+    # pozostałe VALUE_COLS (1..2) zostawiamy tam gdzie były lub dopisz na koniec
+    for c in VALUE_COLS[1:]:
+        if c not in cols:
+            cols.append(c)
+
+    return df_report.reindex(columns=cols)
+
+# kompatybilność wstecz (stare wywołania)
+def _ensure_value_cols(df_report: pd.DataFrame) -> None:
+    ensure_report_columns(df_report)
 
 def _iter_m2_steps(max_margin: float, step: float = 3.0) -> List[float]:
     """Zwraca listę: 3,6,9,...,max_margin (zawsze zawiera max_margin jako ostatni krok)."""
@@ -1032,16 +1082,40 @@ def _process_row(
     min_hits: int = 5,
     step_m2: float = 3.0,
 ) -> None:
-    """Liczy wartości dla jednego wiersza raportu i wpisuje do 3 kolumn.
+    """Liczy wartości dla jednego wiersza raportu i wpisuje do kolumn:
+      - hits (ile ogłoszeń znaleziono w wybranym zakresie)
+      - stage (na jakim etapie znaleziono)
+      - Średnia cena za m2 ( z bazy)
+      - Średnia skorygowana cena za m2
+      - Statystyczna wartość nieruchomości
 
-    Kluczowy wymóg: jeżeli w oknie ±m² jest za mało trafień,
-    automat "skacze" 3/6/9/... aż do max (ustalonego z progu ludności).
+    Wymogi:
+      - Jeśli brak danych adresowych (Województwo/Powiat/Gmina/Miejscowość) -> wpisz 'brak adresu'
+        w kolumnie Średnia cena za m2 ( z bazy).
+      - Jeśli po przejściu całego algorytmu brak wystarczających trafień -> wpisz 'brak ogłoszeń w zakresie'
+        w kolumnie Średnia cena za m2 ( z bazy).
+      - Skakanie pomiarem brzegowym: 3/6/9/... aż do max z progu ludności.
     """
     if df_raport is None or idx < 0 or idx >= len(df_raport.index):
         return
 
-    _ensure_value_cols(df_raport)
+    ensure_report_columns(df_raport)
     row = df_raport.iloc[idx]
+    row_key = df_raport.index[idx]
+
+    def _set_status(avg_text: str, hits: int, stage: str) -> None:
+        df_raport.at[row_key, HITS_COL] = int(hits) if hits is not None else 0
+        df_raport.at[row_key, STAGE_COL] = stage
+        df_raport.at[row_key, VALUE_COLS[0]] = avg_text
+        df_raport.at[row_key, VALUE_COLS[1]] = np.nan
+        df_raport.at[row_key, VALUE_COLS[2]] = np.nan
+
+    def _set_values(avg: float, corrected: float, value: float, hits: int, stage: str) -> None:
+        df_raport.at[row_key, HITS_COL] = int(hits) if hits is not None else 0
+        df_raport.at[row_key, STAGE_COL] = stage
+        df_raport.at[row_key, VALUE_COLS[0]] = avg
+        df_raport.at[row_key, VALUE_COLS[1]] = corrected
+        df_raport.at[row_key, VALUE_COLS[2]] = value
 
     # --- kolumny raportu ---
     col_woj = _find_col(df_raport.columns, ["Województwo", "Wojewodztwo", "woj"])
@@ -1051,6 +1125,11 @@ def _process_row(
     col_dzl = _find_col(df_raport.columns, ["Dzielnica", "Osiedle"])
     col_area = _find_col(df_raport.columns, ["Obszar", "metry", "powierzchnia"])
 
+    # Jeżeli brakuje kolumn adresowych – traktuj jak brak adresu (wymóg użytkownika)
+    if not (col_woj and col_pow and col_gmi and col_mia):
+        _set_status(MISSING_ADDR_TEXT, 0, "brak_kolumn_adresu")
+        return
+
     woj_raw = _trim_after_semicolon(row[col_woj]) if col_woj else ""
     pow_raw = _trim_after_semicolon(row[col_pow]) if col_pow else ""
     gmi_raw = _trim_after_semicolon(row[col_gmi]) if col_gmi else ""
@@ -1058,11 +1137,14 @@ def _process_row(
     dzl_raw = _trim_after_semicolon(row[col_dzl]) if col_dzl else ""
     area_val = _to_float_maybe(row[col_area]) if col_area else None
 
-    if area_val is None or not mia_raw or not woj_raw:
-        # za mało danych – czyścimy wartości i wychodzimy
-        df_raport.at[df_raport.index[idx], VALUE_COLS[0]] = np.nan
-        df_raport.at[df_raport.index[idx], VALUE_COLS[1]] = np.nan
-        df_raport.at[df_raport.index[idx], VALUE_COLS[2]] = np.nan
+    # Brak wartości w kluczowych polach adresu -> "brak adresu"
+    if not woj_raw or not pow_raw or not gmi_raw or not mia_raw:
+        _set_status(MISSING_ADDR_TEXT, 0, "brak_adresu")
+        return
+
+    # Brak metrażu – nie mamy jak liczyć (osobny status diagnostyczny)
+    if area_val is None:
+        _set_status(MISSING_AREA_TEXT, 0, "brak_metrazu")
         return
 
     # --- kanonizacja ---
@@ -1077,7 +1159,8 @@ def _process_row(
     if pop_resolver is not None:
         pop = pop_resolver.get_population(woj_raw, pow_raw, gmi_raw, mia_raw, dzl_raw)
     margin_m2, margin_pct = rules_for_population(pop)
-    if not (isinstance(margin_m2, (int, float)) and margin_m2 > 0):
+
+    if not (isinstance(margin_m2, (int, float)) and float(margin_m2) > 0):
         margin_m2 = float(margin_m2_default)
     if not isinstance(margin_pct, (int, float)):
         margin_pct = float(margin_pct_default)
@@ -1092,12 +1175,12 @@ def _process_row(
     if pl.c_woj and woj_c:
         base_mask &= _mask_eq_canon(df_pl, pl.c_woj, woj_c)
 
-    # stolice województw i Warszawa: szukamy tylko po mieście (ignorujemy pow/gmi, bo w raportach bywają rozjazdy)
+    # stolice województw i Warszawa: szukamy tylko po mieście (ignorujemy pow/gmi)
     if loc_class in ("voiv_capital", "warsaw_city"):
         if pl.c_mia and mia_c:
             base_mask &= _mask_eq_canon(df_pl, pl.c_mia, mia_c)
 
-    # aglomeracja Warszawska: szukamy po liście aglo w ramach Mazowieckiego
+    # aglomeracja Warszawska: lista aglo w ramach Mazowieckiego
     elif loc_class == "warsaw_aglo":
         aglo = getattr(classify_location, "_aglo_cache", None)
         if aglo is None:
@@ -1107,16 +1190,15 @@ def _process_row(
                 aglo = set(AGLO_WARSZAWA_DEFAULT)
             setattr(classify_location, "_aglo_cache", aglo)
         if pl.c_mia:
-            base_mask &= df_pl[pl.c_mia].astype(str).isin(list(aglo | {"warszawa"}))
+            # UWAGA: w tej wersji aglo = "reszta aglo" (bez Warszawy) – dokładnie jak w loaderze.
+            base_mask &= df_pl[pl.c_mia].astype(str).isin(list(aglo))
 
     # normal: gmina -> powiat -> woj
     else:
-        # jeśli mamy gminę, trzymaj się gminy (najbardziej lokalnie)
         if pl.c_gmi and gmi_c:
             base_mask &= _mask_eq_canon(df_pl, pl.c_gmi, gmi_c)
         elif pl.c_pow and pow_c:
             base_mask &= _mask_eq_canon(df_pl, pl.c_pow, pow_c)
-        # else: już mamy woj
 
     # preferencja dzielnicy (jeśli Polska.xlsx ma kolumnę dzielnica)
     prefer_mask = None
@@ -1134,33 +1216,31 @@ def _process_row(
         min_hits=int(min_hits),
     )
 
-    if cand_df is None or len(cand_df.index) == 0:
-        df_raport.at[df_raport.index[idx], VALUE_COLS[0]] = np.nan
-        df_raport.at[df_raport.index[idx], VALUE_COLS[1]] = np.nan
-        df_raport.at[df_raport.index[idx], VALUE_COLS[2]] = np.nan
+    cand_n = int(len(cand_df.index)) if cand_df is not None else 0
+    stage_base = f"{loc_class}|m={float(used_m):g}|{'dzielnica' if used_dzl else 'bez_dzielnicy'}"
+
+    # Brak wystarczającej liczby trafień po przejściu całego algorytmu
+    if cand_df is None or cand_n < int(min_hits):
+        _set_status(NO_OFFERS_TEXT, cand_n, f"{stage_base}|hits<{int(min_hits)}")
         return
 
-    # zawsze usuwamy wartości brzegowe przed średnią
+    # Zawsze usuwamy wartości brzegowe przed średnią
     cand_df2, prices = _filter_outliers_df(cand_df, "_price_num")
     avg = float(np.mean(prices)) if prices is not None and len(prices) else None
 
     if avg is None:
-        df_raport.at[df_raport.index[idx], VALUE_COLS[0]] = np.nan
-        df_raport.at[df_raport.index[idx], VALUE_COLS[1]] = np.nan
-        df_raport.at[df_raport.index[idx], VALUE_COLS[2]] = np.nan
+        _set_status(NO_OFFERS_TEXT, cand_n, f"{stage_base}|outlier_empty")
         return
 
     corrected = float(avg) * (1.0 - float(margin_pct) / 100.0)
     value = corrected * float(area_val)
 
-    df_raport.at[df_raport.index[idx], VALUE_COLS[0]] = avg
-    df_raport.at[df_raport.index[idx], VALUE_COLS[1]] = corrected
-    df_raport.at[df_raport.index[idx], VALUE_COLS[2]] = value
+    _set_values(avg, corrected, value, cand_n, stage_base)
 
     # mały log diagnostyczny (pierwsze 10 wierszy)
     if idx < 10:
         print(
             f"[Row {idx+1}] {woj_raw}/{mia_raw} area={area_val} -> "
-            f"pop={pop} max_m={margin_m2} step={step_m2} used_m={used_m} "
-            f"{'(dzielnica)' if used_dzl else ''} n={len(cand_df.index)} avg={avg:.2f} corr={corrected:.2f}"
+            f"hits={cand_n} stage={stage_base} pop={pop} max_m={margin_m2} step={step_m2} "
+            f"avg={avg:.2f} corr={corrected:.2f}"
         )

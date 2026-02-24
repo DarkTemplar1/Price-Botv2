@@ -180,6 +180,14 @@ def main(argv=None) -> int:
         print(f"[BŁĄD] Nie mogę wczytać raportu: {raport_path}\n{e}")
         return 1
 
+
+    # zapewnij kolumny diagnostyczne + wynikowe (hits/stage + wycena)
+    try:
+        if hasattr(a1, "ensure_report_columns"):
+            a1.ensure_report_columns(df_raport)
+    except Exception as e:
+        print(f"[Automat] Nie mogę przygotować kolumn (hits/stage): {e}")
+
     local_ludnosc = a1._find_ludnosc_csv(baza_folder=baza_folder, raport_path=raport_path, polska_path=polska_path)
     api_cache = baza_folder / "population_cache.csv"
 
@@ -203,6 +211,13 @@ def main(argv=None) -> int:
             print(f"[Automat] Błąd przy wierszu {idx+1}: {e}")
 
     try:
+        # uporządkuj kolumny: Czy udziały? -> hits -> stage -> Średnia cena za m2 ( z bazy)
+        try:
+            if hasattr(a1, "reorder_report_columns"):
+                df_raport = a1.reorder_report_columns(df_raport)
+        except Exception as e:
+            print(f"[Automat] Nie mogę uporządkować kolumn (hits/stage): {e}")
+
         if is_excel:
             save_report_sheet_only(raport_path, df_raport, sheet_name="raport")
         else:
